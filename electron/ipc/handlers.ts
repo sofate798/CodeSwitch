@@ -200,7 +200,7 @@ export function registerIpc(): void {
     }
     // 主题变化时同步 Windows 原生标题栏按钮配色
     if ('theme' in patch && process.platform === 'win32') {
-      const w = BrowserWindow.getAllWindows()[0]
+      const w: BrowserWindow | undefined = BrowserWindow.getAllWindows()[0]
       if (w) {
         const light = next.theme === 'light'
         w.setTitleBarOverlay({
