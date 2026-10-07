@@ -1,0 +1,24 @@
+appId: com.codeswitch.app
+productName: CodeSwitch
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**/*
+  - resources/**/*
+win:
+  target:
+    - nsis
+  icon: resources/icons/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CodeSwitch
+mac:
+  target: dmg
+  icon: resources/icons/icon.icns
+linux:
+  target: AppImage
+  icon: resources/icons

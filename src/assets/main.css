@@ -1,0 +1,51 @@
+:root {
+  --bg-app: #141519;
+  --bg-sidebar: #1b1d23;
+  --bg-card: #22242c;
+  --bg-hover: #2a2d36;
+  --border: #2e313b;
+  --text-primary: #e6e8ee;
+  --text-secondary: #9aa0ad;
+  --accent: #3b82f6;
+  --accent-strong: #60a5fa;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --scrollbar: #3a3d47;
+}
+
+html[data-theme="light"] {
+  --bg-app: #f3f4f6;
+  --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #e9ebef;
+  --border: #e2e4e9;
+  --text-primary: #1f2329;
+  --text-secondary: #5f6672;
+  --accent: #3b82f6;
+  --accent-strong: #2563eb;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --scrollbar: #c9cdd4;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app {
+  height: 100%;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.page { padding: 20px 24px; height: 100%; overflow-y: auto; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+.page-title { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.page-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 20px; }
