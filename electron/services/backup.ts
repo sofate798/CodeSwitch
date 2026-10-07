@@ -14,19 +14,31 @@ function backupDir(): string {
   return dir
 }
 
-/** 备份指定配置文件；若文件不存在则不备份，返回 null */
-export function backupFile(ideId: string, configPath: string, reason: string): BackupEntry | null {
+/** 备份指定配置文件；若文件不存在则不备份，返回 null。
+ * extraPaths：伴随主文件一起备份的附属文件（如 state.vscdb 的 -wal/-shm），存在才拷。 */
+export function backupFile(ideId: string, configPath: string, reason: string, extraPaths: string[] = []): BackupEntry | null {
   if (!configPath || !fs.existsSync(configPath)) return null
   const ts = Date.now()
-  const file = path.join(backupDir(), `${ideId}-${ts}.bak`)
+  // 同一毫秒内可能为同一 IDE 备份多个文件（如 Codex 的 config.toml + auth.json），加随机后缀避免同名覆盖
+  const uid = `${ts}-${Math.random().toString(36).slice(2, 6)}`
+  const file = path.join(backupDir(), `${ideId}-${uid}.bak`)
   fs.copyFileSync(configPath, file)
+  const extraFiles: Array<{ source: string; backup: string }> = []
+  extraPaths.forEach((p, i) => {
+    if (p && fs.existsSync(p)) {
+      const bf = path.join(backupDir(), `${ideId}-${uid}.extra-${i}.bak`)
+      fs.copyFileSync(p, bf)
+      extraFiles.push({ source: p, backup: bf })
+    }
+  })
   const entry: BackupEntry = {
-    id: `${ideId}-${ts}`,
+    id: `${ideId}-${uid}`,
     ideId,
     timestamp: ts,
     file,
     /** 备份时配置文件的原路径，恢复时写回该位置 */
     sourcePath: configPath,
+    extraFiles: extraFiles.length > 0 ? extraFiles : undefined,
     reason,
     size: fs.statSync(file).size
   }
@@ -36,12 +48,18 @@ export function backupFile(ideId: string, configPath: string, reason: string): B
   const kept = list.filter((b) => b.ideId !== ideId)
   const sameIde = list.filter((b) => b.ideId === ideId).sort((a, b) => b.timestamp - a.timestamp)
   for (const old of sameIde.slice(MAX_PER_IDE)) {
-    fs.rmSync(old.file, { force: true })
+    deleteBackupFiles(old)
   }
   kept.push(...sameIde.slice(0, MAX_PER_IDE))
   store.set('backups', kept)
   log('info', 'backup', `${ideId} <- ${configPath} (${reason})`)
   return entry
+}
+
+/** 删除一个备份条目对应的全部磁盘文件（主文件 + 附属文件） */
+function deleteBackupFiles(entry: BackupEntry): void {
+  fs.rmSync(entry.file, { force: true })
+  for (const ex of entry.extraFiles ?? []) fs.rmSync(ex.backup, { force: true })
 }
 
 export function listBackups(ideId?: string): BackupEntry[] {
@@ -68,11 +86,27 @@ export function restoreBackup(backupId: string): { ok: boolean; message: string 
   const target = b.sourcePath ?? findTargetPath(b.ideId)
   if (!target) return { ok: false, message: '无法确定恢复目标路径，请先在 IDE 管理中手动指定配置路径' }
   try {
-    const raw = fs.readFileSync(b.file, 'utf8')
-    try {
-      writeJsonAtomic(target, JSON.parse(raw))
-    } catch {
-      writeRawAtomic(target, raw)
+    // 主文件：JSON 内容按 JSON 原子写回，非 JSON（如 .vscdb 二进制）按原始字节写回
+    const isJson = (() => {
+      try {
+        JSON.parse(fs.readFileSync(b.file, 'utf8'))
+        return true
+      } catch {
+        return false
+      }
+    })()
+    if (isJson) {
+      writeJsonAtomic(target, JSON.parse(fs.readFileSync(b.file, 'utf8')))
+    } else {
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(b.file, target)
+    }
+    // 附属文件（-wal/-shm 等）一并还原
+    for (const ex of b.extraFiles ?? []) {
+      if (fs.existsSync(ex.backup)) {
+        fs.mkdirSync(path.dirname(ex.source), { recursive: true })
+        fs.copyFileSync(ex.backup, ex.source)
+      }
     }
     log('info', 'restore', `${target} <- ${b.file}`)
     return { ok: true, message: `已恢复到 ${target}` }
@@ -86,7 +120,7 @@ export function removeBackup(backupId: string): void {
   const list = store.get('backups')
   const b = list.find((x) => x.id === backupId)
   if (!b) return
-  fs.rmSync(b.file, { force: true })
+  deleteBackupFiles(b)
   store.set('backups', list.filter((x) => x.id !== backupId))
   log('info', 'backup-remove', backupId)
 }

@@ -25,18 +25,18 @@ export function createSnapshot(name: string, description = ''): Snapshot {
   return snap
 }
 
-export function applySnapshot(id: string): { ok: boolean; message: string } {
+export async function applySnapshot(id: string): Promise<{ ok: boolean; message: string }> {
   const snap = store.get('snapshots').find((s) => s.id === id)
   if (!snap) return { ok: false, message: '快照不存在' }
   const errors: string[] = []
-  // 先全部重置，再按快照绑定应用（resetIDE 内部会安全跳过手动配置型 IDE）
+  // 先全部重置，再按快照绑定应用（resetIDE 内部会安全跳过手动/辅助配置型 IDE）
   for (const ideId of Object.keys(store.get('ideBindings'))) {
-    const r = resetIDE(ideId)
+    const r = await resetIDE(ideId)
     if (!r.ok && !r.skipped) errors.push(`${ideId}: ${r.message}`)
   }
   for (const [ideId, binding] of Object.entries(snap.ideBindings)) {
     if (binding.providerId) {
-      const r = applyProvider(ideId, binding.providerId)
+      const r = await applyProvider(ideId, binding.providerId)
       if (!r.ok) errors.push(`${ideId}: ${r.message}`)
     }
   }

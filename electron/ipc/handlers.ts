@@ -1,7 +1,7 @@
 import { ipcMain, dialog, app, shell, BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import { store } from '../services/store'
-import { scanIDEs, applyProvider, resetIDE, manualAdd } from '../services/ideScanner'
+import { scanIDEs, applyProvider, resetIDE, manualAdd, generateConfig, checkIdeRunning } from '../services/ideScanner'
 import { testProvider } from '../services/provider'
 import { listSnapshots, createSnapshot, applySnapshot, removeSnapshot } from '../services/snapshot'
 import { listBackups, restoreBackup, removeBackup } from '../services/backup'
@@ -14,25 +14,25 @@ export function registerIpc(): void {
   // ---- IDE ----
   ipcMain.handle('ide:scan', () => scanIDEs())
   ipcMain.handle('ide:apply', (_e, ideId: string, providerId: string) => applyProvider(ideId, providerId))
-  ipcMain.handle('ide:reset', (_e, ideId: string) =>
-    ideId === 'all'
-      ? (() => {
-          const errs: string[] = []
-          let done = 0
-          for (const s of scanIDEs()) {
-            if (!s.installed) continue
-            const r = resetIDE(s.id)
-            if (r.skipped) continue // 手动配置型 IDE 跳过
-            if (!r.ok) errs.push(r.message)
-            else done++
-          }
-          return errs.length
-            ? { ok: false, message: `部分失败: ${errs.join('; ')}` }
-            : { ok: true, message: `已恢复 ${done} 个 IDE 到默认配置` }
-        })()
-      : resetIDE(ideId)
-  )
+  ipcMain.handle('ide:reset', async (_e, ideId: string) => {
+    if (ideId !== 'all') return resetIDE(ideId)
+    const errs: string[] = []
+    let done = 0
+    for (const s of await scanIDEs()) {
+      if (!s.installed) continue
+      if (s.capability !== 'auto') continue // 手动/辅助型跳过，不计入失败
+      const r = await resetIDE(s.id)
+      if (r.skipped) continue
+      if (!r.ok) errs.push(r.message)
+      else done++
+    }
+    return errs.length
+      ? { ok: false, message: `部分失败: ${errs.join('; ')}` }
+      : { ok: true, message: `已恢复 ${done} 个 IDE 到默认配置` }
+  })
   ipcMain.handle('ide:manual-add', (_e, ideId: string, path: string) => manualAdd(ideId, path))
+  ipcMain.handle('ide:check-running', (_e, ideId: string) => checkIdeRunning(ideId))
+  ipcMain.handle('ide:generate-config', (_e, ideId: string, providerId: string) => generateConfig(ideId, providerId))
 
   // ---- Provider ----
   ipcMain.handle('provider:list', () => store.get('providers'))
@@ -223,4 +223,10 @@ export function registerIpc(): void {
     return r.canceled ? null : r.filePaths[0]
   })
   ipcMain.handle('system:open-data-dir', () => shell.openPath(app.getPath('userData')))
+  ipcMain.handle('system:open-path', (_e, targetPath: string) => {
+    if (!targetPath) return
+    // 文件存在则定位选中，否则打开其所在目录
+    if (fs.existsSync(targetPath)) shell.showItemInFolder(targetPath)
+    else shell.openPath(targetPath)
+  })
 }

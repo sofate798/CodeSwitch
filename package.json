@@ -18,6 +18,8 @@
     "axios": "^1.7.7",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.3.4",
+    "smol-toml": "^1.9.0",
+    "sql.js": "^1.14.2",
     "vue-i18n": "^9.14.4"
   },
   "devDependencies": {

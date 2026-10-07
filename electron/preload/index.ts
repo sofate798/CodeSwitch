@@ -9,7 +9,9 @@ contextBridge.exposeInMainWorld('api', {
     scan: () => ipcInvoke('ide:scan'),
     apply: (ideId: string, providerId: string) => ipcInvoke('ide:apply', ideId, providerId),
     reset: (ideId: string) => ipcInvoke('ide:reset', ideId),
-    manualAdd: (ideId: string, path: string) => ipcInvoke('ide:manual-add', ideId, path)
+    manualAdd: (ideId: string, path: string) => ipcInvoke('ide:manual-add', ideId, path),
+    checkRunning: (ideId: string) => ipcInvoke('ide:check-running', ideId),
+    generateConfig: (ideId: string, providerId: string) => ipcInvoke('ide:generate-config', ideId, providerId)
   },
   provider: {
     list: () => ipcInvoke('provider:list'),
@@ -42,6 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   system: {
     pickFile: (defaultPath?: string) => ipcInvoke('system:pick-file', defaultPath),
     openDataDir: () => ipcInvoke('system:open-data-dir'),
+    openPath: (targetPath: string) => ipcInvoke('system:open-path', targetPath),
     checkUpdate: () => ipcInvoke('system:check-update')
   }
 })

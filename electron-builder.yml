@@ -6,6 +6,11 @@ directories:
 files:
   - out/**/*
   - resources/**/*
+  - node_modules/sql.js/**/*
+  - node_modules/smol-toml/**/*
+# sql.js 的 WASM 需从磁盘真实路径加载，不能被 asar 打包
+asarUnpack:
+  - "**/node_modules/sql.js/dist/sql-wasm.wasm"
 win:
   target:
     - nsis

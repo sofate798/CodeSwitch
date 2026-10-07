@@ -49,6 +49,18 @@ export default {
     batchReset: 'Reset All',
     batchResetTitle: 'Reset All IDEs',
     batchResetConfirm: "Reset all installed IDEs' custom provider configs to official defaults (manual-config IDEs are skipped). Each IDE is backed up first. Continue?",
+    capability: {
+      auto: 'Auto-write',
+      assist: 'Assisted'
+    },
+    closeIdeTitle: 'Close the IDE first',
+    closeIdeConfirm: '{name} is running and its config database is locked. Fully quit {name} and try again (otherwise the write may be overwritten).',
+    generate: 'Generate Config',
+    generateTitle: 'Generate Config (manual paste)',
+    generateHint: 'Copy the content below and paste it into the target IDE settings as instructed:',
+    copy: 'Copy',
+    copied: 'Copied to clipboard',
+    openFolder: 'Open Folder',
     status: {
       customized: 'Customized',
       default: 'Default',

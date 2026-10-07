@@ -49,6 +49,18 @@ export default {
     batchReset: '全部恢复默认',
     batchResetTitle: '全部恢复默认',
     batchResetConfirm: '将把所有已安装 IDE 的自定义供应商配置恢复为官方默认（手动配置型 IDE 自动跳过），每个 IDE 会先自动备份。确定继续？',
+    capability: {
+      auto: '自动写入',
+      assist: '辅助配置'
+    },
+    closeIdeTitle: '请先关闭 IDE',
+    closeIdeConfirm: '{name} 正在运行，其配置数据库被占用。请完全退出 {name} 后重试（否则写入可能被覆盖）。',
+    generate: '生成配置',
+    generateTitle: '生成配置（手动粘贴）',
+    generateHint: '复制以下内容，按提示粘贴到目标 IDE 的设置中：',
+    copy: '复制',
+    copied: '已复制到剪贴板',
+    openFolder: '打开所在目录',
     status: {
       customized: '已自定义',
       default: '默认',
