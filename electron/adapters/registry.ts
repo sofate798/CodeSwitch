@@ -124,23 +124,6 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     // Zed settings.json 为明文 JSON，支持一键写入（文件不存在时自动创建）
   },
   {
-    id: 'copilot',
-    name: 'GitHub Copilot (VS Code)',
-    icon: 'copilot',
-    protocols: ['openai'],
-    homeMarkers: ['${USERPROFILE}\\.copilot'],
-    configPaths: ['${APPDATA}\\Code\\User\\settings.json'],
-    detectPaths: [
-      '${LOCALAPPDATA}\\Programs\\Microsoft VS Code\\Code.exe',
-      'D:\\Program\\Microsoft VS Code\\Code.exe',
-      'C:\\Program Files\\Microsoft VS Code\\Code.exe'
-    ],
-    processNames: ['Code.exe'],
-    capability: 'assist',
-    storage: { kind: 'json', paths: ['${APPDATA}\\Code\\User\\settings.json'], fields: {} },
-    noteKey: 'ide.note.copilot'
-  },
-  {
     id: 'kiro',
     name: 'Kiro',
     icon: 'kiro',
@@ -270,6 +253,30 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       secretFile: { path: '${USERPROFILE}\\.codex\\auth.json', field: 'OPENAI_API_KEY' }
     },
     noteKey: 'ide.note.codex'
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    icon: 'claude',
+    // Claude Code 只读 Anthropic 协议端点（ANTHROPIC_* 系列变量），openai 供应商需经本地网关跨协议接入
+    protocols: ['anthropic'],
+    homeMarkers: ['${USERPROFILE}\\.claude'],
+    configPaths: ['${USERPROFILE}\\.claude\\settings.json'],
+    detectPaths: [
+      '${APPDATA}\\npm\\claude.cmd',
+      '${USERPROFILE}\\.local\\bin\\claude.exe'
+    ],
+    // CLI 不持写 settings.json（每会话读取），无 GUI 型退出覆盖风险，故不设 processNames
+    storage: {
+      kind: 'json',
+      paths: ['${USERPROFILE}\\.claude\\settings.json'],
+      fields: {
+        apiKey: 'env.ANTHROPIC_API_KEY',
+        baseUrl: 'env.ANTHROPIC_BASE_URL',
+        model: 'env.ANTHROPIC_MODEL'
+      }
+    },
+    noteKey: 'ide.note.claude-code'
   }
 ]
 

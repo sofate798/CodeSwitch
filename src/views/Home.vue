@@ -3,14 +3,15 @@ import { ref, computed, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NGrid, NGi, NCard, NTag, NButton, NSelect, NSpace, NEmpty, NInput,
-  NModal, NSpin, useDialog
+  NModal, NSpin, NPopover, useDialog
 } from 'naive-ui'
 import {
   RefreshOutline as IconRefresh,
   CheckmarkDoneOutline as IconCheckmarkDone,
   HardwareChipOutline as IconHardwareChipOutline,
   LayersOutline as IconBatch,
-  ColorPaletteOutline as IconResetAll
+  ColorPaletteOutline as IconResetAll,
+  HelpCircleOutline as IconHelp
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
 import { useResult } from '../composables/useResult'
@@ -278,6 +279,15 @@ function batchReset() {
               <span>{{ ide.name }}</span>
             </div>
             <div class="ide-tags">
+              <!-- 说明长文本改为问号图标 + 点击 popover，卡片高度统一、网格更整齐 -->
+              <n-popover v-if="ide.noteKey" trigger="click" placement="bottom-end" :style="{ maxWidth: '340px' }">
+                <template #trigger>
+                  <button type="button" class="note-btn" :aria-label="t('home.noteAria')">
+                    <n-icon :component="IconHelp" :size="16" />
+                  </button>
+                </template>
+                <div class="note-pop">{{ t(ide.noteKey) }}</div>
+              </n-popover>
               <n-tag v-if="ide.running && ide.installed" size="tiny" :bordered="false" type="warning">{{ t('home.running') }}</n-tag>
               <n-tag v-if="ide.installed && ide.capability !== 'manual'" size="tiny" :bordered="false" :type="ide.capability === 'auto' ? 'success' : 'info'">
                 {{ ide.capability === 'auto' ? t('home.capability.auto') : t('home.capability.assist') }}
@@ -316,7 +326,6 @@ function batchReset() {
               {{ t('home.manualPath') }}
             </n-button>
           </div>
-          <div v-if="ide.noteKey" class="ide-note">{{ t(ide.noteKey) }}</div>
         </n-card>
       </n-gi>
     </n-grid>
@@ -408,6 +417,10 @@ function batchReset() {
 .meta-value.path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-size: 11px; }
 .ide-actions { display: flex; gap: 8px; }
 .ide-note { font-size: 11px; color: var(--warning); margin-top: 8px; line-height: 1.4; }
+.note-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--warning); cursor: pointer; transition: background 0.15s ease; }
+.note-btn:hover { background: var(--warning-soft); }
+.note-btn:focus-visible { outline: 2px solid var(--warning); outline-offset: 1px; }
+.note-pop { font-size: 12px; line-height: 1.6; }
 .form-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
 .empty-hint { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
 .batch-progress { font-size: 12px; color: var(--warning); }

@@ -30,13 +30,13 @@ export default {
       cursor: "Cursor's built-in AI only allows custom endpoints on Pro or higher (an official server-side restriction; writing state.vscdb directly cannot bypass it). On the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Fully close Cursor before writing.",
       windsurf: 'Windsurf stores custom model credentials in its app database, located via adaptive probing. Close Windsurf before writing.',
       trae: 'Trae stores credentials in its app database, located via adaptive probing. Close Trae before writing.',
-      copilot: "Copilot's BYOK keys live in the VS Code system keyvault (DPAPI) and cannot be written safely. Generate the config, then paste it manually in VS Code Settings > Copilot > Models.",
       kiro: 'Kiro stores credentials in its app database, located via adaptive probing. Close Kiro before writing.',
       codebuddy: 'CodeBuddy stores credentials in its app database, located via adaptive probing. Close CodeBuddy before writing.',
       qoder: 'Qoder stores credentials in its app database, located via adaptive probing. Close Qoder before writing.',
       antigravity: 'Antigravity config is plain JSON; if its console performs extra validation, you may need to confirm in the UI after writing.',
       'gemini-cli': 'Gemini CLI natively uses a Google account OAuth; here it writes ~/.gemini/.env in OpenAI-compatible mode, which only takes effect if the CLI supports OpenAI-compatible endpoints.',
       codex: 'Codex CLI uses ~/.codex/config.toml + auth.json; it writes model_provider=codeswitch and stores the Key in auth.json.',
+      'claude-code': 'Claude Code is the official Anthropic CLI; custom endpoints are enabled by writing ANTHROPIC_API_KEY / BASE_URL / MODEL into the env block of ~/.claude/settings.json. Use an Anthropic-protocol provider and restart the CLI to take effect.',
       parseError: 'Config parse failed; the original file was left untouched to protect it.'
     }
   },
@@ -77,6 +77,7 @@ export default {
     empty: 'No installed IDEs detected',
     emptyHint: 'Click Refresh in the top-right corner to rescan',
     running: 'Running',
+    noteAria: 'View notes for this IDE',
     batchApplying: 'Applying {i}/{n}: {name}',
     batchResultTitle: 'Batch Apply Results',
     batchResultSummary: '{ok} succeeded, {failed} failed',

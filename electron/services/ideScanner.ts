@@ -556,7 +556,7 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
   }
 
   if (!text.trim()) {
-    // 无可写字段（如 Copilot BYOK）：给出可复制的三要素摘要
+    // 无可写字段（凭证槽位无法定位的辅助型 IDE）：给出可复制的三要素摘要
     text = `API Key: ${vals.apiKey}\nBase URL: ${vals.baseUrl}\nModel: ${vals.model}`
   }
   return { ok: true, data: { text, targetPath } }

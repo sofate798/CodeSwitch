@@ -30,13 +30,13 @@ export default {
       cursor: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。',
       windsurf: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。',
       trae: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。',
-      copilot: 'Copilot 的 BYOK 密钥存于 VS Code 系统级密钥库（DPAPI），无法安全直写。可生成配置后在 VS Code Settings > Copilot > Models 手动粘贴。',
       kiro: 'Kiro 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Kiro。',
       codebuddy: 'CodeBuddy 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 CodeBuddy。',
       qoder: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。',
       antigravity: 'Antigravity 配置为明文 JSON；若其控制台另有校验，写入后可能需在界面确认。',
       'gemini-cli': 'Gemini CLI 原生使用 Google 账号 OAuth；此处按 OpenAI 兼容模式写入 ~/.gemini/.env，需 CLI 支持 OpenAI 兼容端点方生效。',
       codex: 'Codex CLI 使用 ~/.codex/config.toml + auth.json；将写入 model_provider=codeswitch 并把 Key 存入 auth.json。',
+      'claude-code': 'Claude Code 是 Anthropic 官方 CLI；向 ~/.claude/settings.json 的 env 段写入 ANTHROPIC_API_KEY / BASE_URL / MODEL 实现自定义端点，需使用 Anthropic 协议供应商，重启 CLI 后生效。',
       parseError: '配置解析失败，已保护原文件不做改动'
     }
   },
@@ -77,6 +77,7 @@ export default {
     empty: '未探测到已安装的 IDE',
     emptyHint: '点击右上角刷新重新扫描',
     running: '运行中',
+    noteAria: '查看该 IDE 的配置说明',
     batchApplying: '正在应用 {i}/{n}：{name}',
     batchResultTitle: '批量应用结果',
     batchResultSummary: '成功 {ok} 个，失败 {failed} 个',

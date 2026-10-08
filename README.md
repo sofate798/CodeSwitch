@@ -31,7 +31,7 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 - **能力分级**：每款 IDE 按可自动化程度标注为「一键写入（auto）」或「辅助配置（assist）」，UI 据此启用或降级应用按钮，避免对无法安全直写的 IDE 强行改写。
 - **供应商管理**：新增、编辑、删除 AI 供应商，必须显式选择协议类型（OpenAI / Anthropic），支持分组、连接测试与 JSON 导入导出。
 - **一键应用与恢复**：对单个或全部 IDE 应用供应商配置；修改前自动备份，支持一键恢复官方默认设置与失败自动回滚。数据库 / TOML 类 IDE 写入前会检测其是否在运行，未关闭时拒绝写入以防配置被覆盖或损坏。
-- **配置生成与复制**：对辅助型 IDE（如 GitHub Copilot）或无法自动定位凭证槽位的情况，可一键生成对应格式的配置文本并复制，按提示在 IDE 设置界面手动粘贴。
+- **配置生成与复制**：对无法自动定位凭证槽位而降级为辅助配置的 IDE，可一键生成对应格式的配置文本并复制，按提示在 IDE 设置界面手动粘贴。
 - **本地转发网关**：在 `127.0.0.1` 启动 OpenAI / Anthropic 双协议兼容的本地代理，把请求转发到选定供应商，支持两协议互转（含流式 SSE）与本地随机 token 鉴权、防 DNS rebinding。任何可自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）都可指向网关复用同一份供应商配置；Cursor 免费版自带 AI 被官方服务端封锁自定义端点，也可在 Cursor 内装免费的 OpenAI 兼容扩展指向网关，免订阅使用自定义供应商。
 - **统一错误契约**：所有桌面操作返回带消息码的结构化结果（OpResult），界面按当前语言渲染文案，失败绝不静默报成功；技术异常细节只落日志，不向 UI 外透原始错误串。
 - **快照管理**：保存当前所有 IDE 的供应商绑定状态，可随时一键切换回某个快照。
@@ -46,7 +46,7 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 
 ## 支持的 IDE
 
-CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/registry.ts`](electron/adapters/registry.ts)），当前内置以下 11 款 IDE。其中 10 款支持一键写入，仅 GitHub Copilot 因密钥存于系统级密钥库（DPAPI）无法安全直写，采用「生成配置 + 手动粘贴」的辅助方式：
+CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/registry.ts`](electron/adapters/registry.ts)），当前内置以下 11 款 IDE，均支持一键写入（凭证槽位无法自动定位时自动降级为「生成配置 + 手动粘贴」的辅助方式）：
 
 | IDE | 支持协议 | 配置载体 | 自动化能力 |
 | --- | --- | --- | --- |
@@ -54,13 +54,13 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 | Windsurf | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测凭证行） | 一键写入（写入前关闭 Windsurf） |
 | Trae | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Trae） |
 | Zed | OpenAI / Anthropic | `settings.json`（明文 JSON） | 一键写入（文件不存在时自动创建） |
-| GitHub Copilot (VS Code) | OpenAI | VS Code 系统密钥库（DPAPI），无法安全直写 | 辅助：生成配置 + 一键复制，需在设置手动粘贴 |
 | Kiro | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Kiro） |
 | CodeBuddy | OpenAI | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 CodeBuddy） |
 | Qoder | OpenAI | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Qoder） |
 | Antigravity | OpenAI / Anthropic | `config.json`（明文 JSON） | 一键写入（若控制台另有校验可能需界面确认） |
 | Gemini CLI | OpenAI | `~/.gemini/.env`（KEY=VALUE 文本） | 一键写入（需 CLI 支持 OpenAI 兼容端点方生效） |
 | Codex CLI | OpenAI | `~/.codex/config.toml` + `auth.json` | 一键写入（写入 `model_provider=codeswitch`，Key 存入 auth.json） |
+| Claude Code | Anthropic | `~/.claude/settings.json` 的 `env` 段（明文 JSON） | 一键写入（写 `ANTHROPIC_API_KEY / BASE_URL / MODEL`，重启 CLI 生效；OpenAI 供应商可经本地网关跨协议接入） |
 
 ### 配置写入策略
 
@@ -68,7 +68,7 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 | 策略 | 载体 | 说明 |
 | --- | --- | --- |
-| `json` | 明文 JSON（Zed / Antigravity） | 按点路径写入字段，文件不存在时可自动创建 |
+| `json` | 明文 JSON（Zed / Antigravity / Claude Code） | 按点路径写入字段，文件不存在时可自动创建 |
 | `sqlite` | VS Code 系 `state.vscdb`（Cursor / Windsurf / Trae / Kiro / CodeBuddy / Qoder） | 用 sql.js 整库读写 `ItemTable`；已知行键直接定位，未知 schema 用 `probeContains` 自适应探测凭证行；apiKey 镜像原字段的 DPAPI 加密形态 |
 | `toml` | `config.toml` + 可选 `auth.json`（Codex） | 写入表段与顶层标量，密钥单独落到 JSON secret 文件 |
 | `env` | `.env`（Gemini CLI） | 以 `KEY=VALUE` 形式写入环境变量 |
@@ -274,7 +274,7 @@ CodeSwitch/
 
 1. **添加供应商**：进入「供应商」页面，填写名称、选择协议类型（OpenAI / Anthropic）、填入 API Key、Base URL 与 Model，保存。可点击「连接测试」验证可用性。
 2. **应用配置**：在首页选中目标 IDE，选择要应用的供应商并点击「应用」。应用前会自动备份原配置；若目标为数据库 / TOML 类 IDE（如 Cursor、Windsurf、Codex），需先完全关闭该 IDE。
-3. **辅助配置**：对于 GitHub Copilot 等无法安全直写的 IDE，点击「生成配置」获取对应格式的文本，一键复制后按提示在 IDE 设置界面手动粘贴。
+3. **辅助配置**：对凭证槽位无法自动定位而降级为辅助配置的 IDE，点击「生成配置」获取对应格式的文本，一键复制后按提示在 IDE 设置界面手动粘贴。
 4. **恢复默认**：在 IDE 详情或首页点击「恢复默认」，将配置还原为官方默认或此前的备份（危险操作需二次确认）。
 5. **快照**：在「快照」页面保存当前所有 IDE 的供应商绑定，之后可一键切换。
 6. **本地转发网关**：在「设置 > 本地转发网关」启用并选定目标供应商，获得形如 `http://127.0.0.1:<port>` 的地址与访问 token；将任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）指向该地址并携带 token，即可复用同一份供应商配置（OpenAI / Anthropic 互转）。
@@ -284,7 +284,7 @@ CodeSwitch/
 
 ## 注意事项
 
-- 多数 IDE 已支持一键写入；仅少数（如 GitHub Copilot）因密钥存于系统级密钥库而无法安全直写，需通过「生成配置」手动粘贴。
+- 内置支持的 IDE 均已支持一键写入；若某 IDE 的凭证槽位无法自动定位，会自动降级为辅助配置，需通过「生成配置」手动粘贴。
 - Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 `state.vscdb` 也无法绕过）；免费版可在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline / Continue 等 OpenAI 兼容扩展指向网关地址，即可免订阅使用自定义供应商。
 - 数据库 / TOML 类 IDE（Cursor、Windsurf、Trae、Kiro、CodeBuddy、Qoder、Codex）写入前必须先完全关闭对应 IDE，否则会被拒绝写入。其中 Cursor 还需 Pro 及以上订阅才支持自定义 API。
 - 若选择的协议与目标 IDE 不兼容（例如某 IDE 仅支持 OpenAI 协议却应用了 Anthropic 供应商），应用前会给出明确提示。
