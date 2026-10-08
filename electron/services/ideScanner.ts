@@ -4,7 +4,6 @@ import { store } from './store'
 import { backupFile, readJsonSafe, writeJsonAtomic, restoreBackup } from './backup'
 import { providerValues, applyFieldsToConfig, setPath, getPath, unsetPath } from './provider'
 import { readItem, probeItem, writeItem, type SqliteRow } from './sqliteStore'
-import { tryDecryptSecret, encryptSecret } from './secureValue'
 import { readToml, writeTomlAtomic, ensureTable, removeTable } from './tomlStore'
 import { readEnv, writeEnvAtomic, removeEnvKeys } from './envStore'
 import { isIdeRunning } from './processGuard'
@@ -202,9 +201,11 @@ function bind(ideId: string, providerId: string, configPath: string, sqliteRowKe
   store.set(`ideBindings.${ideId}`, { providerId, configPath, sqliteRowKey })
 }
 
+/** 只解除供应商引用：configPath 可能是用户手动指定的路径，恢复默认后不能丢 */
 function unbind(ideId: string): void {
   const bindings = store.get('ideBindings')
-  delete bindings[ideId]
+  if (!bindings[ideId]) return
+  bindings[ideId] = { ...bindings[ideId], providerId: null }
   store.set('ideBindings', bindings)
 }
 
@@ -266,7 +267,10 @@ async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec
   const fields: FieldMap = provider.protocol === 'anthropic' && s.anthropicValueFields ? s.anthropicValueFields : s.valueFields
 
   // 先探测定位（写入前需知道 rowKey 与原值类型/加密形态）
-  const loc: LocateResult = fs.existsSync(dbPath) ? await locateSqliteRow(dbPath, s) : { row: null, ambiguous: false }
+  // 上次写入已定位过的行键优先（与恢复默认同口径），否则多候选行的库每次应用都会卡在 rowAmbiguous
+  const prev = store.get('ideBindings')[ide.id]
+  const hintRowKey = prev?.configPath === dbPath ? prev.sqliteRowKey : undefined
+  const loc: LocateResult = fs.existsSync(dbPath) ? await locateSqliteRow(dbPath, s, hintRowKey) : { row: null, ambiguous: false }
   // H1：命中多行无法安全定位，返回 rowAmbiguous 让用户手选，绝不默认写首个
   if (loc.ambiguous) return { ok: false, code: 'msg.ide.rowAmbiguous' }
   const existingRow = loc.row
@@ -285,14 +289,8 @@ async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec
 
   const bk = backupFile(ide.id, dbPath, `apply:${provider.name}`, [`${dbPath}-wal`, `${dbPath}-shm`])
   try {
-    // apiKey 落盘：原值是 DPAPI 密文则镜像加密；首次写入（无原值可镜像）且声明 encryptSecret 时默认加密（Alex-M3）
-    if (fields.apiKey) {
-      const original = getPath(obj, fields.apiKey)
-      const dec = tryDecryptSecret(original)
-      const hadOriginal = original != null && original !== ''
-      const shouldEncrypt = s.encryptSecret !== false && (dec.encrypted || !hadOriginal)
-      setPath(obj, fields.apiKey, encryptSecret(vals.apiKey, shouldEncrypt))
-    }
+    // 必须写明文：Electron safeStorage 在 Windows 产出 v10 密文，密钥存于本应用私有的 Local State，目标 IDE 无法解密
+    if (fields.apiKey) setPath(obj, fields.apiKey, vals.apiKey)
     if (fields.baseUrl) setPath(obj, fields.baseUrl, vals.baseUrl)
     if (fields.model) setPath(obj, fields.model, vals.model)
 

@@ -123,7 +123,8 @@ export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
   const req: any = {
     model: body.model || fallbackModel,
     messages: msgs,
-    max_tokens: body.max_tokens ?? 4096,
+    // 新版 OpenAI 客户端只发 max_completion_tokens（max_tokens 已弃用），漏读会把用户上限静默换成 4096
+    max_tokens: body.max_tokens ?? body.max_completion_tokens ?? 4096,
     stream: !!body.stream
   }
   if (systemParts.length) req.system = systemParts.join('\n')

@@ -467,7 +467,11 @@ async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>
   const stream = !!body.stream
   try {
     if (act.provider.protocol === 'anthropic') {
-      return await passThrough(`${act.baseUrl}/v1/messages`, { 'x-api-key': act.apiKey, 'anthropic-version': '2023-06-01' }, body, res, signal)
+      // 同协议透传须带上客户端的版本/beta 头：Claude Code 等请求体里的 beta 字段离开对应头会被上游 400
+      const headers: Record<string, string> = { 'x-api-key': act.apiKey, 'anthropic-version': String(req.headers['anthropic-version'] ?? '2023-06-01') }
+      const beta = req.headers['anthropic-beta']
+      if (beta) headers['anthropic-beta'] = String(beta)
+      return await passThrough(`${act.baseUrl}/v1/messages`, headers, body, res, signal)
     }
     // Anthropic 入站 → OpenAI 供应商
     const oReq = anthropicToOpenaiReq(body, act.model)

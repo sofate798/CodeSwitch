@@ -282,7 +282,6 @@ export default {
     },
     backup: {
       restoreOk: '已恢复备份到：{target}',
-      restoreWarn: '已恢复，但检测到残留 -wal 预写日志：建议先正常启停相关 IDE 触发 checkpoint，避免旧数据回写覆盖恢复结果',
       restoreFailed: '恢复失败，详情已写入操作日志',
       restoreNotFound: '备份不存在或备份文件已丢失',
       restoreNoTarget: '无法确定恢复目标路径，请先在「IDE 管理」手动指定配置路径',

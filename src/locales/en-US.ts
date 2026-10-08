@@ -282,7 +282,6 @@ export default {
     },
     backup: {
       restoreOk: 'Backup restored to: {target}',
-      restoreWarn: 'Restored, but a residual -wal was detected. Start and quit the related IDE normally to trigger a checkpoint, otherwise stale data may overwrite the restore',
       restoreFailed: 'Restore failed. See operation logs for details',
       restoreNotFound: 'Backup not found or backup file missing',
       restoreNoTarget: 'Cannot determine the restore target. Set the config path manually under IDE Management first',

@@ -67,7 +67,7 @@ async function create() {
 // Jack-Med6：应用前二次确认。applySnapshot 会先把“当前已绑定”的 IDE 全部 reset 再按快照应用，
 // 因此影响数 = 快照绑定 ∩当前已绑定 的并集，不能只算快照内数量（会低估破坏半径）。
 function doApply(s: Snapshot) {
-  const snapIds = Object.keys(s.ideBindings ?? {})
+  const snapIds = Object.entries(s.ideBindings ?? {}).filter(([, b]) => b?.providerId).map(([id]) => id)
   const boundIds = store.ides.filter((i) => i.currentProviderId).map((i) => i.id)
   const count = new Set([...snapIds, ...boundIds]).size
   dialog.warning({

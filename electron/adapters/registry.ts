@@ -42,8 +42,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
         baseUrl: 'anthropicOverrideBaseUrl',
         model: 'anthropicOverrideModel'
       },
-      probeContains: ['openAiApiKey', 'anthropicOverrideApiKey', 'apiKey'],
-      encryptSecret: true
+      probeContains: ['openAiApiKey', 'anthropicOverrideApiKey', 'apiKey']
     },
     noteKey: 'ide.note.cursor'
   },
@@ -67,8 +66,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       keyColumn: 'key',
       valueColumn: 'value',
       valueFields: { apiKey: 'customModelApiKey', baseUrl: 'customModelBaseUrl', model: 'customModelName' },
-      probeContains: ['customModelApiKey', 'apiKey', 'baseUrl'],
-      encryptSecret: true
+      probeContains: ['customModelApiKey', 'apiKey', 'baseUrl']
     },
     noteKey: 'ide.note.windsurf'
   },
@@ -92,8 +90,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       keyColumn: 'key',
       valueColumn: 'value',
       valueFields: { apiKey: 'apiKey', baseUrl: 'baseUrl', model: 'model' },
-      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
-      encryptSecret: true
+      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url']
     },
     noteKey: 'ide.note.trae'
   },
@@ -144,8 +141,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       keyColumn: 'key',
       valueColumn: 'value',
       valueFields: { apiKey: 'apiKey', baseUrl: 'baseUrl', model: 'model' },
-      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
-      encryptSecret: true
+      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url']
     },
     noteKey: 'ide.note.kiro'
   },
@@ -169,8 +165,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       keyColumn: 'key',
       valueColumn: 'value',
       valueFields: { apiKey: 'apiKey', baseUrl: 'baseUrl', model: 'model' },
-      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
-      encryptSecret: true
+      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url']
     },
     noteKey: 'ide.note.codebuddy'
   },
@@ -197,8 +192,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       keyColumn: 'key',
       valueColumn: 'value',
       valueFields: { apiKey: 'apiKey', baseUrl: 'baseUrl', model: 'model' },
-      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
-      encryptSecret: true
+      probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url']
     },
     noteKey: 'ide.note.qoder'
   },

@@ -161,22 +161,6 @@ function writeRawAtomic(file: string, content: string): void {
   }
 }
 
-/**
- * Sam-M4：恢复 sqlite 目标前检测残留 -wal 预写日志。
- * 存在非空 -wal 时返回告警标记 'wal'（文案由前端 i18n 渲染，服务层不携中文），
- * 提示用户先正常启停 IDE 触发 checkpoint，否则 -wal 中未落盘的改动可能与恢复内容不一致。
- */
-function detectResidualWal(target: string): string | null {
-  try {
-    if (!/\.(vscdb|db|sqlite)$/i.test(target)) return null
-    const wal = `${target}-wal`
-    if (fs.existsSync(wal) && fs.statSync(wal).size > 0) return 'wal'
-  } catch {
-    // 检测失败不阻断恢复
-  }
-  return null
-}
-
 interface RestoreSnapshot {
   orig: string
   tmp: string
@@ -254,41 +238,28 @@ export function restoreBackup(backupId: string): OpResult {
     log('warn', 'restore', `cannot resolve restore target for ide: ${b.ideId}`)
     return { ok: false, code: 'msg.backup.restoreNoTarget' }
   }
-  const walWarning = detectResidualWal(target)
   const extraSources = (b.extraFiles ?? []).map((e) => e.source).filter(Boolean)
-  const snaps = snapshotTargets([target, ...extraSources])
+  // 备份里没有的 -wal/-shm 属于恢复前的库状态，留着会被 IDE 回放到恢复后的主库上
+  const staleSidecars = /\.(vscdb|db|sqlite)$/i.test(target)
+    ? [`${target}-wal`, `${target}-shm`].filter((p) => !extraSources.includes(p) && fs.existsSync(p))
+    : []
+  const snaps = snapshotTargets([target, ...extraSources, ...staleSidecars])
   try {
-    // 主文件：JSON 内容按 JSON 原子写回，非 JSON（如 .vscdb 二进制）按字节原子替换
-    const isJson = (() => {
-      try {
-        JSON.parse(fs.readFileSync(b.file, 'utf8'))
-        return true
-      } catch {
-        return false
-      }
-    })()
-    if (isJson) {
-      writeJsonAtomic(target, JSON.parse(fs.readFileSync(b.file, 'utf8')))
-    } else {
-      copyFileAtomic(b.file, target)
-    }
-    // 附属文件（-wal/-shm 等）一并原子还原
+    // 按字节还原：JSON 重新序列化会改掉用户原有的缩进/排版
+    copyFileAtomic(b.file, target)
     for (const ex of b.extraFiles ?? []) {
       if (fs.existsSync(ex.backup)) copyFileAtomic(ex.backup, ex.source)
     }
+    for (const p of staleSidecars) fs.rmSync(p, { force: true })
     cleanupTargets(snaps)
     log('info', 'restore', `${target} <- ${b.file}`)
-    const args: Record<string, string | number> = { target }
-    if (walWarning) args.warning = walWarning
-    return { ok: true, code: 'msg.backup.restoreOk', args }
+    return { ok: true, code: 'msg.backup.restoreOk', args: { target } }
   } catch (e) {
     rollbackTargets(snaps)
     cleanupTargets(snaps)
     log('error', 'restore-failed', `${target}: ${(e as Error).message}`)
     // 异常细节仅落日志；对外统一消息码，避免非 i18n 文案泄漏到界面
-    const args: Record<string, string | number> = {}
-    if (walWarning) args.warning = walWarning
-    return { ok: false, code: 'msg.backup.restoreFailed', args }
+    return { ok: false, code: 'msg.backup.restoreFailed' }
   }
 }
 

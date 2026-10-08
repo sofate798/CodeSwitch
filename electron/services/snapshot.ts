@@ -15,8 +15,11 @@ export function createSnapshot(name: string, description = ''): OpResult<Snapsho
     name,
     description,
     createdAt: Date.now(),
+    // 仅记录真正绑定了供应商的 IDE：空绑定（手动路径 / 已恢复默认）应用时本就无操作，记进来只会虚增影响数
     ideBindings: Object.fromEntries(
-      Object.entries(bindings).map(([ideId, v]) => [ideId, { providerId: v.providerId }])
+      Object.entries(bindings)
+        .filter(([, v]) => v.providerId)
+        .map(([ideId, v]) => [ideId, { providerId: v.providerId }])
     )
   }
   const list = store.get('snapshots')
@@ -35,7 +38,9 @@ export async function applySnapshot(id: string): Promise<OpResult> {
   // 已下架适配器（快照/导入数据里的历史 IDE）归入跳过，不能计失败：它们本就无法再被管理
   const known = new Set(IDE_REGISTRY.map((d) => d.id))
   // 先全部重置：resetIDE 现返回 OpResult，canceled=true 表示跳过（manual/assist），不计失败
-  for (const ideId of Object.keys(store.get('ideBindings'))) {
+  for (const [ideId, b] of Object.entries(store.get('ideBindings'))) {
+    // 未绑定供应商的记录（仅手动路径 / 已恢复默认）无事可重置；去重置反而会被运行中的 IDE 误报失败
+    if (!b.providerId) continue
     if (!known.has(ideId)) { skipped++; continue }
     const r = await resetIDE(ideId)
     if (r.canceled) continue

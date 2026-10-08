@@ -90,8 +90,6 @@ function restore(b: BackupEntry) {
       try {
         const r = await window.api.backup.restore(b.id)
         showResult(r)
-        // 恢复成功但检测到残留 -wal（Sam-M4 数据安全告警）：单独弱提醒，不阻断；文案已去插值
-        if (r.ok && r.args?.warning === 'wal') message.warning(t('msg.backup.restoreWarn'))
         await store.refreshAll()
         await load()
       } finally {

@@ -141,8 +141,6 @@ export type StorageSpec =
       anthropicValueFields?: FieldMap
       /** 自适应探测：命中这些特征键之一的 JSON 行即视为凭证槽位 */
       probeContains?: string[]
-      /** 若原值为 DPAPI(safeStorage) 密文，则写回时镜像加密 */
-      encryptSecret?: boolean
     }
   | {
       kind: 'toml'
