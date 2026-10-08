@@ -132,7 +132,8 @@ async function copyProxyUrl() {
     await navigator.clipboard.writeText(url)
     message.success(t('settings.proxy.copied'))
   } catch {
-    message.error(url)
+    // 失败提示走本地化文案，绝不把 URL 本身当错误消息弹出（与 copyToken/copyGen 口径一致）
+    message.error(t('home.copyFailed'))
   }
 }
 
