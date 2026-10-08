@@ -33,6 +33,7 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 - **一键应用与恢复**：对单个或全部 IDE 应用供应商配置；修改前自动备份，支持一键恢复官方默认设置与失败自动回滚。数据库 / TOML 类 IDE 写入前会检测其是否在运行，未关闭时拒绝写入以防配置被覆盖或损坏。
 - **配置生成与复制**：对辅助型 IDE（如 GitHub Copilot）或无法自动定位凭证槽位的情况，可一键生成对应格式的配置文本并复制，按提示在 IDE 设置界面手动粘贴。
 - **本地转发网关**：在 `127.0.0.1` 启动 OpenAI / Anthropic 双协议兼容的本地代理，把请求转发到选定供应商，支持两协议互转（含流式 SSE）与本地随机 token 鉴权、防 DNS rebinding。任何可自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）都可指向网关复用同一份供应商配置；Cursor 免费版自带 AI 被官方服务端封锁自定义端点，也可在 Cursor 内装免费的 OpenAI 兼容扩展指向网关，免订阅使用自定义供应商。
+- **统一错误契约**：所有桌面操作返回带消息码的结构化结果（OpResult），界面按当前语言渲染文案，失败绝不静默报成功；技术异常细节只落日志，不向 UI 外透原始错误串。
 - **快照管理**：保存当前所有 IDE 的供应商绑定状态，可随时一键切换回某个快照。
 - **备份中心**：按 IDE 归档历史备份（含 SQLite 的 `-wal` / `-shm` 附属文件），支持查看、恢复与删除。
 - **操作日志**：记录每一次修改 / 恢复操作，内存缓冲 + 按日文件落盘，便于追溯。
@@ -94,7 +95,7 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 - 连接测试：向 `{base_url}/v1/messages` 发送最小消息
 - 典型 Base URL：`https://api.anthropic.com`
 
-连接测试超时 5s，返回 200 视为成功，并展示延迟与错误信息。
+连接测试超时 5s，返回 2xx 视为成功并展示延迟；失败按消息码归类提示（鉴权失败 / HTTP 状态码 / 超时 / 网络错误 / 地址非法 / 密钥不可用），不回显上游响应体。
 
 ### 本地转发网关的跨协议转换
 
@@ -102,7 +103,7 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 - 入站路由：`GET /health`（健康检查，无需 token）、`GET /v1/models`、`POST /v1/chat/completions`（OpenAI 入站）、`POST /v1/messages`（Anthropic 入站）。
 - 同协议直接透传，跨协议（OpenAI ↔ Anthropic）自动转换请求 / 响应，含流式 SSE。
-- 安全：仅监听 `127.0.0.1`，启动时生成随机 token（`Authorization: Bearer` / `x-codeswitch-token` / `?token=` 三种携带方式）；CORS 收紧为回显本机 Origin，并校验 Host 防 DNS rebinding。
+- 安全：仅监听 `127.0.0.1`，启动时生成随机 token（`Authorization: Bearer` / `x-codeswitch-token` / `?token=` 三种携带方式）；CORS 收紧为回显本机 Origin，并校验 Host 防 DNS rebinding；请求体上限 32 MB（超限拒收返回 413）；客户端中途断开时主动 abort 进行中的上游请求。
 - 已知限制：跨协议的工具调用（tools / tool_choice）仅在**非流式**请求 / 响应下完整映射，流式（SSE）仅保证纯文本正确。
 
 ---
@@ -155,7 +156,7 @@ CodeSwitch 由 electron-vite 拆分为三个构建目标：`main`（主进程）
 └─────────────────────────────────────────┘
 ```
 
-主进程服务位于 [`electron/services/`](electron/services)，IPC 路由集中在 [`electron/ipc/handlers.ts`](electron/ipc/handlers.ts)，渲染进程可调用的接口类型定义在 [`electron/shared/types.ts`](electron/shared/types.ts) 的 `API` 接口中。其中 IDE 探测与写入（`ideScanner.ts`）按适配器的 `storage` 策略分派到四个存储后端（`sqliteStore` / `tomlStore` / `envStore` 与 JSON 原子写），写入前由 `processGuard.ts` 检测目标 IDE 是否在运行，凭证的 DPAPI 镜像加密由 `secureValue.ts`（封装 Electron `safeStorage`）完成。本地转发网关（`proxy.ts` + `proxyTranslate.ts`）在 `127.0.0.1` 提供 OpenAI / Anthropic 双协议入站与跨协议转换，纯函数转换逻辑独立于 Electron 便于复用与单测。自定义数据目录由 `paths.ts` 管理，并在 `main/bootstrap.ts` 中作为最先执行的副作用在 electron-store 实例化前重定向 `userData`。
+主进程服务位于 [`electron/services/`](electron/services)，IPC 路由集中在 [`electron/ipc/handlers.ts`](electron/ipc/handlers.ts)，渲染进程可调用的接口类型定义在 [`electron/shared/types.ts`](electron/shared/types.ts) 的 `API` 接口中。所有可能失败的操作统一返回 `OpResult { ok, code, args, data, canceled }`：后端只回消息码，前端由 `src/composables/useResult.ts` 按当前语言渲染文案；入参在主进程侧收口校验（字段长度 / 枚举白名单 / URL 合法性 / 重名拦截），「在文件夹中显示」类操作受数据目录 + IDE 配置路径白名单约束。其中 IDE 探测与写入（`ideScanner.ts`）按适配器的 `storage` 策略分派到四个存储后端（`sqliteStore` / `tomlStore` / `envStore` 与 JSON 原子写），写入前由 `processGuard.ts` 检测目标 IDE 是否在运行，凭证的 DPAPI 镜像加密由 `secureValue.ts`（封装 Electron `safeStorage`）完成。本地转发网关（`proxy.ts` + `proxyTranslate.ts`）在 `127.0.0.1` 提供 OpenAI / Anthropic 双协议入站与跨协议转换，纯函数转换逻辑独立于 Electron 便于复用与单测。自定义数据目录由 `paths.ts` 管理，并在 `main/bootstrap.ts` 中作为最先执行的副作用在 electron-store 实例化前重定向 `userData`。
 
 前端页面（[`src/views/`](src/views)）：
 
@@ -163,7 +164,7 @@ CodeSwitch 由 electron-vite 拆分为三个构建目标：`main`（主进程）
 - `Providers.vue`：供应商增删改查（含协议选择、连接测试、导入导出）
 - `Snapshots.vue`：快照管理
 - `Backups.vue`：备份中心
-- `Logs.vue`：操作日志
+- `Logs.vue`：操作日志（关键词搜索 + 级别过滤 + 导出）
 - `Settings.vue`：主题、语言、开机自启、本地转发网关、数据目录、重置与更新等设置
 
 ---
@@ -236,6 +237,7 @@ CodeSwitch/
 ├── src/                       # Vue 渲染进程
 │   ├── views/                 # 页面组件
 │   ├── stores/app.ts          # Pinia 状态
+│   ├── composables/useResult.ts # OpResult 消息码→本地化文案统一消费
 │   ├── router/index.ts        # 路由
 │   ├── locales/               # zh-CN / en-US 语言包
 │   ├── icons/                 # 自定义品牌 SVG 组件
@@ -246,7 +248,7 @@ CodeSwitch/
 ├── scripts/build-icon.mjs     # 图标生成脚本
 ├── electron.vite.config.ts    # 三端构建配置
 ├── electron-builder.yml       # 打包配置
-├── Doc/开发需求文档.md         # 产品需求文档 (PRD)
+├── Doc/项目开发文档.md         # 项目开发文档
 └── package.json
 ```
 
@@ -257,11 +259,12 @@ CodeSwitch/
 - **本地优先**：所有数据（供应商、快照、备份、日志）均存储在本机用户数据目录，不上传任何服务器。
 - **加密存储**：CodeSwitch 自有存储中的 API Key 使用 AES-256-GCM 加密，密钥由设备指纹（主机名 + MAC）经 scrypt 派生并绑定本机，存储格式为 `enc:<iv>:<tag>:<data>`。
 - **格式镜像**：写入目标 IDE 数据库时，apiKey 会镜像其原生加密形态（Windows DPAPI / Electron `safeStorage`）——原值是密文就用同机制重新加密，原值是明文则写明文，绝不写入 IDE 无法解析的格式。
-- **脱敏显示**：敏感信息在 UI 中默认脱敏为 `sk-****xxxx`。
+- **脱敏显示**：敏感信息在 UI 中默认脱敏为 `sk-****xxxx`（尾号取自后端密文解析，前端不接触明文）；网关 token 同样脱敏展示，需显式点击才可查看或复制。
+- **二次确认**：删除供应商（含被 IDE 引用时的警示）、应用快照、导出含明文 Key 的备份/配置、重置软件等危险或敏感操作均需明确确认后才执行。
 - **原子写入**：文件写入采用「写临时文件 + 原子替换」策略，失败自动回滚。
 - **写入前守卫**：SQLite / TOML 类 IDE 写入前会检测其进程是否在运行，未关闭时拒绝写入，避免配置被覆盖或损坏。
 - **本机测试**：连接测试直接在本机发起，不经中转服务器。
-- **网关仅本机监听**：本地转发网关只绑定 `127.0.0.1`，需要随机 token 才能访问 API（`/health` 除外），并校验 Host / Origin 防 DNS rebinding 与跨域；转发时目标供应商的明文 Key 仅在内存中用于请求上游，绝不回显给客户端或写入日志。
+- **网关仅本机监听**：本地转发网关只绑定 `127.0.0.1`，需要随机 token 才能访问 API（`/health` 除外），并校验 Host / Origin 防 DNS rebinding 与跨域；请求体上限 32 MB；转发时目标供应商的明文 Key 仅在内存中用于请求上游，绝不回显给客户端或写入日志。
 
 > 由于加密密钥绑定设备指纹，加密后的数据在其他机器上无法解密，请在同一台设备上使用与迁移。
 
