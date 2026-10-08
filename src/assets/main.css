@@ -1,17 +1,31 @@
 :root {
-  --bg-app: #141519;
-  --bg-sidebar: #1b1d23;
-  --bg-card: #22242c;
-  --bg-hover: #2a2d36;
-  --border: #2e313b;
-  --text-primary: #e6e8ee;
-  --text-secondary: #9aa0ad;
+  /* 深色主题：分层表面体系（canvas < sidebar < card < elevated）+ 内凹输入，
+     拉开明度差以增强浮起感；新增 soft/muted/ring 等语义化 token 供全局复用。 */
+  --bg-app: #131419;
+  --bg-sidebar: #171922;
+  --bg-card: #21232c;
+  --bg-elevated: #272a34;
+  --bg-input: #1a1c23;
+  --bg-hover: #2b2e39;
+  --border: #2c2f39;
+  --border-strong: #3a3e4a;
+  --text-primary: #e7e9ef;
+  --text-secondary: #99a1b0;
+  --text-muted: #6c7382;
   --accent: #3b82f6;
   --accent-strong: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, 0.16);
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
+  --info: #60a5fa;
+  --success-soft: rgba(34, 197, 94, 0.16);
+  --warning-soft: rgba(245, 158, 11, 0.16);
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --info-soft: rgba(59, 130, 246, 0.16);
+  --ring: rgba(59, 130, 246, 0.4);
   --scrollbar: #3a3d47;
+  --scrollbar-hover: #4a4e5a;
 }
 
 /* 浅色主题：已校准文本/边框/次要文字在白底下的对比度（次要文字 >= AA 4.5:1）。
@@ -21,16 +35,28 @@ html[data-theme="light"] {
   --bg-app: #f3f4f6;
   --bg-sidebar: #ffffff;
   --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #f7f8fa;
   --bg-hover: #e6e9ee;
   --border: #d2d6dd;
+  --border-strong: #c2c7d0;
   --text-primary: #1a1d23;
   --text-secondary: #4c5462;
+  --text-muted: #8a909c;
   --accent: #2563eb;
   --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.12);
   --success: #15803d;
   --warning: #b45309;
   --danger: #b91c1c;
+  --info: #2563eb;
+  --success-soft: rgba(21, 128, 61, 0.12);
+  --warning-soft: rgba(180, 83, 9, 0.12);
+  --danger-soft: rgba(185, 28, 28, 0.12);
+  --info-soft: rgba(37, 99, 235, 0.12);
+  --ring: rgba(37, 99, 235, 0.35);
   --scrollbar: #b6bcc6;
+  --scrollbar-hover: #9aa1ad;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,7 +73,11 @@ html, body, #app {
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 全局选区：用强调色柔化背景，深浅两主题下均与主色一致 */
+::selection { background: var(--accent-soft); }
 
 .page { padding: 20px 24px; height: 100%; overflow-y: auto; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 .page-title { font-size: 20px; font-weight: 600; margin-bottom: 4px; }

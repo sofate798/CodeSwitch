@@ -69,7 +69,7 @@ function clear() {
 .log-level {
   font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 3px; min-width: 48px; text-align: center;
 }
-.log-level.info { background: #3b82f622; color: #60a5fa; }
-.log-level.warn { background: #f59e0b22; color: #f59e0b; }
-.log-level.error { background: #ef444422; color: #ef4444; }
+.log-level.info { background: var(--info-soft); color: var(--info); }
+.log-level.warn { background: var(--warning-soft); color: var(--warning); }
+.log-level.error { background: var(--danger-soft); color: var(--danger); }
 </style>

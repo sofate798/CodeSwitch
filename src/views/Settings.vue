@@ -259,14 +259,14 @@ async function checkUpdate() {
 </template>
 
 <style scoped>
-.set-card { background: var(--bg-card); max-width: 640px; margin-bottom: 20px; }
+.set-card { background: var(--bg-card); border: 1px solid var(--border); max-width: 640px; margin-bottom: 20px; }
 .about { display: flex; align-items: center; gap: 12px; }
 .about-text { font-size: 12px; color: var(--text-secondary); }
 .proxy-head { display: flex; justify-content: space-between; align-items: flex-start; }
 .proxy-title { font-weight: 600; font-size: 14px; }
 .proxy-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 .proxy-hint { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin-top: 4px; white-space: pre-line; }
-.proxy-error { font-size: 12px; color: #ef4444; margin-top: 6px; }
+.proxy-error { font-size: 12px; color: var(--danger); margin-top: 6px; }
 .dir-hint { font-size: 11px; color: var(--text-secondary); }
-.danger-card { border: 1px solid #ef444433; }
+.danger-card { border: 1px solid var(--danger-soft); }
 </style>

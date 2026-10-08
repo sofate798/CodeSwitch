@@ -152,7 +152,7 @@ function remove(b: BackupEntry) {
 <style scoped>
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .bak-list { display: flex; flex-direction: column; gap: 8px; }
-.bak-card { background: var(--bg-card); }
+.bak-card { background: var(--bg-card); border: 1px solid var(--border); }
 .bak-card :deep(.n-card__content) { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .bak-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .bak-info { min-width: 0; }

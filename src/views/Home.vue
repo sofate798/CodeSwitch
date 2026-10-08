@@ -365,7 +365,7 @@ function batchReset() {
 <style scoped>
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .loading-state { display: flex; justify-content: center; align-items: center; padding: 72px 0; }
-.ide-card { background: var(--bg-card); }
+.ide-card { background: var(--bg-card); border: 1px solid var(--border); }
 .ide-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .ide-tags { display: flex; align-items: center; gap: 6px; }
 .gen-text :deep(textarea) { font-family: monospace; font-size: 12px; }

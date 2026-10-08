@@ -7,6 +7,7 @@ import { initLogger, log } from '../services/logger'
 import { store } from '../services/store'
 import { autoStartProxy, stopProxy } from '../services/proxy'
 import { isLegacyCipher, migrateCipher } from '../services/crypto'
+import { applyTitleBarOverlay, TITLE_BAR } from './titleBar'
 import type { OpResult, Provider } from '../shared/types'
 
 let win: BrowserWindow | null = null
@@ -37,17 +38,10 @@ registerProcessGuards()
 
 /**
  * 根据主题切换 Windows 原生标题栏按钮（最小化/最大化/关闭）的配色。
- * 深色：侧栏底色 #1b1d23 + 浅色图标；浅色：白底 + 深色图标。
+ * 具体取值与“覆盖层颜色必须等于 topbar 背景”的约束集中在 ./titleBar 中维护。
  */
 export function applyTitleBarTheme(theme: string): void {
-  if (!win || process.platform !== 'win32') return
-  const light = theme === 'light'
-  win.setTitleBarOverlay({
-    color: light ? '#ffffff' : '#1b1d23',
-    symbolColor: light ? '#1f2329' : '#e6e8ee',
-    height: 40
-  })
-  win.setBackgroundColor(light ? '#f3f4f6' : '#141519')
+  applyTitleBarOverlay(win, theme)
 }
 
 function createWindow(): void {
@@ -59,12 +53,12 @@ function createWindow(): void {
     show: false,
     center: true,
     autoHideMenuBar: true,
-    backgroundColor: '#141519',
+    backgroundColor: TITLE_BAR.dark.color,
     title: 'CodeSwitch',
     icon: path.join(__dirname, '../../resources/icons/icon.ico'),
     titleBarStyle: process.platform === 'win32' ? 'hidden' : 'default',
     titleBarOverlay: process.platform === 'win32'
-      ? { color: '#1b1d23', symbolColor: '#e6e8ee', height: 40 }
+      ? { ...TITLE_BAR.dark, height: TITLE_BAR.height }
       : undefined,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),

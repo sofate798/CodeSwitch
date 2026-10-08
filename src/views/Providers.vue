@@ -242,7 +242,7 @@ watch(() => store.providers, () => { testResult.value = {} })
 <style scoped>
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
 .provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
-.p-card { background: var(--bg-card); }
+.p-card { background: var(--bg-card); border: 1px solid var(--border); }
 .p-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .p-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
 .p-meta { margin-bottom: 10px; }
@@ -250,7 +250,7 @@ watch(() => store.providers, () => { testResult.value = {} })
 .k { color: var(--text-secondary); }
 .v { max-width: 65%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .v.mono { font-family: monospace; }
-.p-test { font-size: 11px; padding: 4px 8px; border-radius: 4px; margin-bottom: 8px; background: #ef444422; color: #ef4444; display: flex; align-items: center; gap: 4px; }
-.p-test.ok { background: #22c55e22; color: #22c55e; }
+.p-test { font-size: 11px; padding: 4px 8px; border-radius: 4px; margin-bottom: 8px; background: var(--danger-soft); color: var(--danger); display: flex; align-items: center; gap: 4px; }
+.p-test.ok { background: var(--success-soft); color: var(--success); }
 .p-actions { display: flex; gap: 6px; }
 </style>

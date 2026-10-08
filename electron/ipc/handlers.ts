@@ -9,6 +9,7 @@ import { listBackups, restoreBackup, removeBackup } from '../services/backup'
 import { getLogs, getLogsForExport, clearLogs, log } from '../services/logger'
 import { proxyStatus, configureProxy, stopProxy, getProxyToken } from '../services/proxy'
 import { getDataDirInfo, migrateDataDir } from '../services/paths'
+import { applyTitleBarOverlay } from '../main/titleBar'
 import { encrypt, decrypt, keyTail, isCipher } from '../services/crypto'
 import { randomUUID } from 'node:crypto'
 import type { Provider, AppSettings, Protocol, ProxyConfig, Snapshot, OpResult } from '../shared/types'
@@ -434,18 +435,9 @@ export function registerIpc(): void {
     if ('autoLaunch' in patch) {
       app.setLoginItemSettings({ openAtLogin: next.autoLaunch })
     }
-    // 主题变化时同步 Windows 原生标题栏按钮配色
-    if ('theme' in patch && process.platform === 'win32') {
-      const w: BrowserWindow | undefined = BrowserWindow.getAllWindows()[0]
-      if (w) {
-        const light = next.theme === 'light'
-        w.setTitleBarOverlay({
-          color: light ? '#ffffff' : '#1b1d23',
-          symbolColor: light ? '#1f2329' : '#e6e8ee',
-          height: 40
-        })
-        w.setBackgroundColor(light ? '#f3f4f6' : '#141519')
-      }
+    // 主题变化时同步 Windows 原生标题栏按钮配色（取值与平台守卫集中在 applyTitleBarOverlay）
+    if ('theme' in patch) {
+      applyTitleBarOverlay(BrowserWindow.getAllWindows()[0] ?? null, next.theme)
     }
     return next
   })

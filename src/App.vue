@@ -31,22 +31,72 @@ const menu = computed(() => [
   { path: '/settings', label: t('nav.settings'), icon: IconSettingsOutline }
 ])
 
-const themeOverrides = {
+// 组件库主题覆盖：浅色仅微调主色；深色额外把 Naive 自带灰阶（弹窗/下拉/输入框/卡片）
+// 对齐到 main.css 调色板，消除"组件灰与页面灰不一致"，并统一语义色。
+const themeOverrides = computed(() => ({
   common: {
     borderRadius: '6px',
     primaryColor: '#3b82f6',
     primaryColorHover: '#60a5fa',
-    primaryColorPressed: '#2563eb'
+    primaryColorPressed: '#2563eb',
+    ...(isDark.value
+      ? {
+          bodyColor: '#131419',
+          cardColor: '#21232c',
+          modalColor: '#272a34',
+          popoverColor: '#272a34',
+          inputColor: '#1a1c23',
+          tableColor: '#21232c',
+          borderColor: '#2c2f39',
+          dividerColor: '#2c2f39',
+          hoverColor: '#2b2e39',
+          pressedColor: '#31343f',
+          textColor1: '#eceef3',
+          textColor2: '#d3d7df',
+          textColor3: '#99a1b0',
+          placeholderColor: '#6c7382',
+          iconColor: '#99a1b0',
+          iconColorHover: '#c7ccd6',
+          infoColor: '#3b82f6',
+          infoColorHover: '#60a5fa',
+          infoColorPressed: '#2563eb',
+          successColor: '#22c55e',
+          successColorHover: '#4ade80',
+          successColorPressed: '#16a34a',
+          warningColor: '#f59e0b',
+          warningColorHover: '#fbbf24',
+          warningColorPressed: '#d97706',
+          errorColor: '#ef4444',
+          errorColorHover: '#f87171',
+          errorColorPressed: '#dc2626'
+        }
+      : {})
   },
-  // 深色主题下 Naive 默认把 primary 按钮文字/图标取为 baseColor（=#000 黑），
-  // 与自定义蓝色背景对比差、不易读。这里显式改为白色（浅色本就是白，两主题统一）。
+  // 深色主题下 Naive 把所有实心彩色按钮（primary/error/success/warning/info）的文字/图标
+  // 默认取为 baseColor（=#000 黑），与彩色背景对比差、不易读。这里统一改为白色（浅色本就是白，两主题一致）。
   Button: {
     textColorPrimary: '#fff',
     textColorHoverPrimary: '#fff',
     textColorPressedPrimary: '#fff',
-    textColorFocusPrimary: '#fff'
+    textColorFocusPrimary: '#fff',
+    textColorError: '#fff',
+    textColorHoverError: '#fff',
+    textColorPressedError: '#fff',
+    textColorFocusError: '#fff',
+    textColorSuccess: '#fff',
+    textColorHoverSuccess: '#fff',
+    textColorPressedSuccess: '#fff',
+    textColorFocusSuccess: '#fff',
+    textColorWarning: '#fff',
+    textColorHoverWarning: '#fff',
+    textColorPressedWarning: '#fff',
+    textColorFocusWarning: '#fff',
+    textColorInfo: '#fff',
+    textColorHoverInfo: '#fff',
+    textColorPressedInfo: '#fff',
+    textColorFocusInfo: '#fff'
   }
-}
+}))
 
 // Jack-High1：跟随系统主题。用 matchMedia 建立对 OS 配色的响应式监听，
 // 'system' 模式下依据系统实际明/暗偏好实时切换 Naive theme 与 <html> data-theme。
@@ -169,7 +219,8 @@ function nav(path: string) { router.push(path) }
   font-size: 13.5px; transition: all 0.15s;
 }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
-.nav-item.active { background: rgba(59,130,246,0.15); color: var(--accent-strong); }
+.nav-item:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.nav-item.active { background: var(--accent-soft); color: var(--accent-strong); }
 .sidebar-footer { padding: 10px; }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
