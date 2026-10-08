@@ -26,6 +26,7 @@ export type MsgCode =
   | 'msg.ide.manualAddOk'
   | 'msg.ide.incompatibleProtocol'
   | 'msg.ide.rowAmbiguous'
+  | 'msg.ide.slotNotFound'
   // 供应商
   | 'msg.provider.saveOk'
   | 'msg.provider.removeOk'

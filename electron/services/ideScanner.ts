@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { IDE_REGISTRY, resolvePath } from '../adapters/registry'
 import { store } from './store'
-import { backupFile, readJsonSafe, writeJsonAtomic, restoreBackup } from './backup'
+import { backupFile, readJsonSafe, writeJsonAtomic, restoreBackup, parseJsonc } from './backup'
 import { providerValues, applyFieldsToConfig, setPath, getPath, unsetPath } from './provider'
 import { readItem, probeItem, writeItem, type SqliteRow } from './sqliteStore'
 import { readToml, writeTomlAtomic, ensureTable, removeTable } from './tomlStore'
@@ -275,7 +275,9 @@ async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec
   if (loc.ambiguous) return { ok: false, code: 'msg.ide.rowAmbiguous' }
   const existingRow = loc.row
   const rowKey = existingRow?.rowKey ?? s.rowKey
-  if (!rowKey) return { ok: false, code: 'msg.ide.notFound' }
+  // 已安装、库也在，只是探测不到凭证行（多为从未在 IDE 内配置过自定义模型）：不能复用 notFound，
+  // 否则界面说“未找到该 IDE”，快照应用还会把它当未安装静默跳过
+  if (!rowKey) return { ok: false, code: 'msg.ide.slotNotFound', args: { name: ide.name } }
 
   // H2：原行 JSON.parse 失败则中止并返回 parseError，绝不静默置 {} 覆盖整行导致其它字段丢失
   let obj: any = {}
@@ -327,7 +329,8 @@ function applyToml(ide: IDEAdapterDef, provider: Provider, s: TomlSpec, target: 
       if (sp) {
         const bk2 = backupFile(ide.id, sp, `apply:${provider.name}:secret`)
         try {
-          const j = fs.existsSync(sp) ? JSON.parse(fs.readFileSync(sp, 'utf8')) : {}
+          const raw = fs.existsSync(sp) ? fs.readFileSync(sp, 'utf8') : ''
+          const j = raw.trim() ? parseJsonc(raw) : {}
           j[s.secretFile.field] = vals.apiKey
           writeJsonAtomic(sp, j)
         } catch (e) {
@@ -370,8 +373,10 @@ export async function resetIDE(ideId: string): Promise<OpResult> {
   if (!ide) return { ok: false, code: 'msg.ide.notFound' }
 
   const cap = computeCapability(ide)
-  // 手动/辅助配置型无需恢复：ok=true 且 canceled=true 表示「已跳过、未实际改动」
-  if (cap === 'manual' || cap === 'assist') {
+  // 手动/辅助配置型无需恢复：ok=true 且 canceled=true 表示「已跳过、未实际改动」。
+  // 例外：json 型 assist（Zed）早期版本直写过字段（含明文 Key），恢复默认仍需能清掉这些残留；
+  // resetJson 在文件里找不到这些字段时不备份也不重写，对从未写过的文件是无操作。
+  if (cap === 'manual' || (cap === 'assist' && ide.storage.kind !== 'json')) {
     return { ok: true, canceled: true, code: 'msg.ide.notWritable' }
   }
 
@@ -487,7 +492,8 @@ function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
   const sp = s.secretFile ? resolvePath(s.secretFile.path) : null
   let secretDoc: any = null
   if (sp && s.secretFile && fs.existsSync(sp)) {
-    const j = JSON.parse(fs.readFileSync(sp, 'utf8'))
+    const raw = fs.readFileSync(sp, 'utf8')
+    const j = raw.trim() ? parseJsonc(raw) : null
     if (j && typeof j === 'object' && s.secretFile.field in j) {
       delete j[s.secretFile.field]
       secretDoc = j
@@ -530,6 +536,23 @@ function resetEnv(ide: IDEAdapterDef, s: EnvSpec, target: string): void {
 
 // ---------------- 生成配置（assist / 无法自动定位时的兜底） ----------------
 
+/**
+ * 目标结构无法用三字段映射表达的 assist 型 IDE，按其官方 schema 生成片段（均不含 API Key）。
+ * Zed：openai_compatible 的对象键即 provider id，Key 读取自钥匙串或环境变量 <ID 大写>_API_KEY（此处为 CODESWITCH_API_KEY）。
+ */
+const ASSIST_SNIPPETS: Record<string, (vals: { baseUrl: string; model: string }) => unknown> = {
+  zed: (vals) => ({
+    language_models: {
+      openai_compatible: {
+        codeswitch: {
+          api_url: vals.baseUrl,
+          available_models: [{ name: vals.model, display_name: vals.model, max_tokens: 128000 }]
+        }
+      }
+    }
+  })
+}
+
 export function generateConfig(ideId: string, providerId: string): OpResult<{ text: string; targetPath?: string }> {
   const ide = IDE_REGISTRY.find((x) => x.id === ideId)
   const provider: Provider | undefined = store.get('providers').find((p) => p.id === providerId)
@@ -550,7 +573,10 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
   const targetPath = targetForWrite(ide) ?? undefined
   let text = ''
 
-  if (s.kind === 'json') {
+  const snippet = ASSIST_SNIPPETS[ide.id]
+  if (snippet) {
+    text = JSON.stringify(snippet(vals), null, 2)
+  } else if (s.kind === 'json') {
     text = JSON.stringify(applyFieldsToConfig(provider, s.fields, {}, ide.id), null, 2)
   } else if (s.kind === 'sqlite') {
     const fields = provider.protocol === 'anthropic' && s.anthropicValueFields ? s.anthropicValueFields : s.valueFields

@@ -88,8 +88,12 @@ function anthropicToolChoiceToOpenai(tc: any): any {
   return undefined
 }
 
-/** OpenAI chat 请求 → Anthropic messages 请求（含 tools / tool_choice / tool_calls / tool 结果映射） */
-export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
+/**
+ * OpenAI chat 请求 → Anthropic messages 请求（含 tools / tool_choice / tool_calls / tool 结果映射）。
+ * 跨协议时客户端的 model 属于入站协议的命名空间（gpt-*），对目标供应商必然无效，一律用供应商配置的 targetModel；
+ * 同协议透传不经过本函数，仍尊重客户端选择。
+ */
+export function openaiToAnthropicReq(body: any, targetModel: string): any {
   const messages: any[] = Array.isArray(body.messages) ? body.messages : []
   const systemParts: string[] = []
   const msgs: any[] = []
@@ -122,7 +126,7 @@ export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
     msgs.push({ role: 'user', content: Array.isArray(m.content) ? contentToText(m.content) : m.content })
   }
   const req: any = {
-    model: body.model || fallbackModel,
+    model: targetModel,
     messages: msgs,
     // 新版 OpenAI 客户端只发 max_completion_tokens（max_tokens 已弃用），漏读会把用户上限静默换成 4096
     max_tokens: body.max_tokens ?? body.max_completion_tokens ?? 4096,
@@ -142,8 +146,11 @@ export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
   return req
 }
 
-/** Anthropic messages 请求 → OpenAI chat 请求（含 tools / tool_choice / tool_use / tool_result 映射） */
-export function anthropicToOpenaiReq(body: any, fallbackModel: string): any {
+/**
+ * Anthropic messages 请求 → OpenAI chat 请求（含 tools / tool_choice / tool_use / tool_result 映射）。
+ * model 同样固定为 targetModel：Claude Code 主请求与后台小模型请求都带 claude-* 名，转给 OpenAI 协议供应商必报模型不存在。
+ */
+export function anthropicToOpenaiReq(body: any, targetModel: string): any {
   const msgs: any[] = []
   if (body.system) msgs.push({ role: 'system', content: contentToText(body.system) })
   for (const m of Array.isArray(body.messages) ? body.messages : []) {
@@ -174,7 +181,7 @@ export function anthropicToOpenaiReq(body: any, fallbackModel: string): any {
     const text = contentToText(m.content)
     if (text || toolResults.length === 0) msgs.push({ role: 'user', content: text })
   }
-  const req: any = { model: body.model || fallbackModel, messages: msgs, stream: !!body.stream }
+  const req: any = { model: targetModel, messages: msgs, stream: !!body.stream }
   if (body.max_tokens) req.max_tokens = body.max_tokens
   if (typeof body.temperature === 'number') req.temperature = body.temperature
   if (typeof body.top_p === 'number') req.top_p = body.top_p
@@ -297,6 +304,13 @@ export function anthropicStreamToOpenai(stream: SseStream, res: SseResponse, mod
   sseSetup(res)
   const id = `chatcmpl-${Date.now()}`
   res.write(openaiChunk({ role: 'assistant', content: '' }, model, id))
+  // 收敛 [DONE]+end 只做一次：message_stop 分支与流 end 事件都会调用。抽成独立闭包后，
+  // TS 不会把外层 writableEnded 的收窄带入（也顺带去重两处相同的写结束逻辑）。
+  const endOnce = () => {
+    if (res.writableEnded) return
+    res.write('data: [DONE]\n\n')
+    res.end()
+  }
   consumeSSE(
     stream,
     (d) => {
@@ -314,18 +328,10 @@ export function anthropicStreamToOpenai(stream: SseStream, res: SseResponse, mod
         // OpenAI 客户端靠末块 finish_reason 判断截断（length）与正常结束（stop），不能只给 [DONE]
         res.write(openaiChunk({}, model, id, mapStop(ev.delta.stop_reason)))
       } else if (ev.type === 'message_stop') {
-        if (!res.writableEnded) {
-          res.write('data: [DONE]\n\n')
-          res.end()
-        }
+        endOnce()
       }
     },
-    () => {
-      if (!res.writableEnded) {
-        res.write('data: [DONE]\n\n')
-        res.end()
-      }
-    }
+    endOnce
   )
 }
 

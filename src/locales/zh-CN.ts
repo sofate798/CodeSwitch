@@ -30,7 +30,7 @@ export default {
       cursor: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。',
       windsurf: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。',
       trae: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。',
-      zed: 'Zed 将模型配置写在 settings.json 的 language_models.openai 段，仅支持 OpenAI 协议；整文件重写前请先关闭 Zed，避免其退出时用内存中的配置覆盖。',
+      zed: 'Zed 只从系统钥匙串或环境变量读取 API Key，不能写进 settings.json，故采用辅助配置：把生成的片段合并进 settings.json，再在 Zed 的 Agent 设置里为 codeswitch 供应商填写 API Key（或设置环境变量 CODESWITCH_API_KEY），然后在 Agent 面板选择该模型。若旧版本曾直写过配置，可用「恢复默认」清除残留。',
       kiro: 'Kiro 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Kiro。',
       codebuddy: 'CodeBuddy 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 CodeBuddy。',
       qoder: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。',
@@ -248,7 +248,8 @@ export default {
       pathInvalid: '配置路径无效',
       manualAddOk: '已保存手动指定的配置路径',
       incompatibleProtocol: '{ide} 不支持 {protocol} 协议',
-      rowAmbiguous: '配置存储中存在多个候选项，无法确定写入位置'
+      rowAmbiguous: '配置存储中存在多个候选项，无法确定写入位置',
+      slotNotFound: '未在 {name} 的配置库中找到自定义模型凭证项：请先在 {name} 内手动配置一次自定义模型，关闭后再应用'
     },
     provider: {
       saveOk: '供应商已保存',

@@ -98,8 +98,11 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     id: 'zed',
     name: 'Zed',
     icon: 'zed',
-    // C2：Zed settings.json 落点为 language_models.openai.*，无独立可靠的 anthropic 落点，仅保留 openai
+    // Zed 官方文档：Key 只从系统钥匙串 / 环境变量读取（明确要求不要写进 settings.json），
+    // 自定义端点须写成 language_models.openai_compatible.<id>.api_url + available_models 数组。
+    // 现有字段映射表达不了数组，直写也拿不到 Key，故为 assist：生成正确片段，Key 由用户在 Zed 内填写。
     protocols: ['openai'],
+    capability: 'assist',
     homeMarkers: ['${APPDATA}\\Zed', '${USERPROFILE}\\.config\\zed'],
     configPaths: ['${APPDATA}\\Zed\\settings.json'],
     detectPaths: [
@@ -112,6 +115,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     storage: {
       kind: 'json',
       paths: ['${APPDATA}\\Zed\\settings.json'],
+      // 旧版直写过的字段（Zed 并不读取，其中 api_key 是落盘的明文 Key）：仅供“恢复默认”清除残留
       fields: {
         apiKey: 'language_models.openai.api_key',
         baseUrl: 'language_models.openai.base_url',
@@ -119,7 +123,6 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       }
     },
     noteKey: 'ide.note.zed'
-    // Zed settings.json 为明文 JSON，支持一键写入（文件不存在时自动创建）
   },
   {
     id: 'kiro',

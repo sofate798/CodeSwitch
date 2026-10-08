@@ -103,12 +103,36 @@ export function migrateDataDir(newDir: string): OpResult<{ newDir: string }> {
       if (fs.existsSync(src)) fs.cpSync(src, dst, { recursive: true, force: true })
     }
     writeBootstrap(newDir)
+    pendingMigration = newDir
     log('info', 'migrate-data-dir', `${oldDir} -> ${newDir}`)
     return { ok: true, code: 'msg.settings.dataDirChanged', data: { newDir } }
   } catch (e) {
     // 异常原文（可能含路径/系统英文描述）只进日志，不外透 UI
     log('error', 'migrate-data-dir', `failed: ${(e as Error).message}`)
     return { ok: false, code: 'msg.common.error' }
+  }
+}
+
+/** 本次运行中已迁移、尚未重启生效的目标目录 */
+let pendingMigration: string | null = null
+
+/**
+ * 迁移后用户可选“稍后重启”：此后的改动（供应商、绑定、备份、日志）仍写在旧目录，
+ * 重启后读新目录就全部丢失。退出/重启前再把可变数据同步一次。
+ * Local State 不在其列：其中的 os_crypt 密钥运行期不变，且退出时 Chromium 可能正在写它。
+ */
+export function syncPendingMigration(): void {
+  if (!pendingMigration) return
+  const oldDir = app.getPath('userData')
+  const newDir = pendingMigration
+  try {
+    for (const item of ['config.json', 'backups', 'logs', 'secure']) {
+      const src = path.join(oldDir, item)
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(newDir, item), { recursive: true, force: true })
+    }
+    pendingMigration = null
+  } catch (e) {
+    log('error', 'migrate-data-dir', `final sync failed: ${(e as Error).message}`)
   }
 }
 

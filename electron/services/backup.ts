@@ -304,10 +304,63 @@ export function writeJsonAtomic(file: string, data: unknown): void {
   }
 }
 
+/**
+ * 宽松解析 JSONC：Zed 等编辑器的 settings.json 默认就带 // 注释与尾逗号，记事本另存的文件常带 BOM，
+ * 严格 JSON.parse 会把这些正常文件判成“配置异常”并拒绝写入。逐字符扫描以免误伤字符串内的 // 与逗号。
+ * 回写仍是标准 JSON（注释会丢失），写入前的自动备份可还原原文。
+ */
+export function parseJsonc(text: string): any {
+  const src = text.replace(/^\uFEFF/, '')
+  let noComments = ''
+  let inStr = false
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    if (inStr) {
+      noComments += c
+      if (c === '\\') noComments += src[++i] ?? ''
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') {
+      inStr = true
+      noComments += c
+    } else if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      noComments += '\n'
+    } else if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2)
+      i = end < 0 ? src.length : end + 1
+    } else {
+      noComments += c
+    }
+  }
+  let out = ''
+  inStr = false
+  for (let i = 0; i < noComments.length; i++) {
+    const c = noComments[i]
+    if (inStr) {
+      out += c
+      if (c === '\\') out += noComments[++i] ?? ''
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') inStr = true
+    if (c === ',') {
+      let j = i + 1
+      while (j < noComments.length && /\s/.test(noComments[j])) j++
+      if (noComments[j] === '}' || noComments[j] === ']') continue
+    }
+    out += c
+  }
+  return JSON.parse(out)
+}
+
 export function readJsonSafe(file: string): { data: any | null; error: string | null } {
   if (!fs.existsSync(file)) return { data: null, error: 'not_found' }
   try {
-    return { data: JSON.parse(fs.readFileSync(file, 'utf8')), error: null }
+    const raw = fs.readFileSync(file, 'utf8')
+    if (!raw.trim()) return { data: {}, error: null }
+    return { data: parseJsonc(raw), error: null }
   } catch (e) {
     return { data: null, error: (e as Error).message }
   }

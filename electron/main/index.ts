@@ -9,6 +9,7 @@ import { initLogger, log } from '../services/logger'
 import { store } from '../services/store'
 import { autoStartProxy, stopProxy } from '../services/proxy'
 import { isLegacyCipher, migrateCipher } from '../services/crypto'
+import { syncPendingMigration } from '../services/paths'
 import { applyTitleBarOverlay, resolveDark, TITLE_BAR } from './titleBar'
 import type { OpResult, Provider } from '../shared/types'
 
@@ -402,6 +403,8 @@ app.on('before-quit', () => {
   isQuiting = true
   stopProxy().catch(() => {})
 })
+
+app.on('will-quit', () => syncPendingMigration())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && isQuiting) app.quit()

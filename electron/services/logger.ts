@@ -159,7 +159,11 @@ function todayLogFile(): string {
   return path.join(logDir, `app-${new Date().toISOString().slice(0, 10)}.log`)
 }
 
-export function log(level: LogEntry['level'], action: string, detail = ''): void {
+export function log(level: LogEntry['level'], action: string, rawDetail = ''): void {
+  // 日志文件按行解析：换行会把一条记录拆碎（续行在重载/导出时被丢弃），
+  // 且 detail 常含渲染层传入的路径/URL，带换行即可伪造出一条“看似真实”的日志行
+  const detail = String(rawDetail).replace(/[\r\n]+/g, ' ')
+  action = String(action).replace(/\s+/g, '_')
   // 托盘常驻进程可跨天运行，启动时选定的文件（跨天重启时还可能是旧日期文件）不能一直写下去：
   // 换日即切到当天文件并补一次保留期清理/大小滚动
   if (logDir && logFile !== todayLogFile()) {

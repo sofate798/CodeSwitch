@@ -30,7 +30,7 @@ export default {
       cursor: "Cursor's built-in AI only allows custom endpoints on Pro or higher (an official server-side restriction; writing state.vscdb directly cannot bypass it). On the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Fully close Cursor before writing.",
       windsurf: 'Windsurf stores custom model credentials in its app database, located via adaptive probing. Close Windsurf before writing.',
       trae: 'Trae stores credentials in its app database, located via adaptive probing. Close Trae before writing.',
-      zed: 'Zed keeps model settings in the language_models.openai block of settings.json and supports OpenAI only; close Zed before the whole file is rewritten, otherwise it overwrites on exit from its in-memory config.',
+      zed: 'Zed only reads API keys from the system keychain or environment variables, never from settings.json, so it uses assisted setup: merge the generated snippet into settings.json, enter the API key for the codeswitch provider in Zed\'s Agent settings (or set CODESWITCH_API_KEY), then pick the model in the Agent panel. If an older version wrote settings directly, use Reset to clear the leftovers.',
       kiro: 'Kiro stores credentials in its app database, located via adaptive probing. Close Kiro before writing.',
       codebuddy: 'CodeBuddy stores credentials in its app database, located via adaptive probing. Close CodeBuddy before writing.',
       qoder: 'Qoder stores credentials in its app database, located via adaptive probing. Close Qoder before writing.',
@@ -248,7 +248,8 @@ export default {
       pathInvalid: 'Invalid config path',
       manualAddOk: 'Config path saved',
       incompatibleProtocol: '{ide} does not support the {protocol} protocol',
-      rowAmbiguous: 'Multiple candidate entries found; unable to determine the write target'
+      rowAmbiguous: 'Multiple candidate entries found; unable to determine the write target',
+      slotNotFound: 'No custom-model credential entry found in the {name} config database. Configure a custom model once inside {name}, quit it, then apply again'
     },
     provider: {
       saveOk: 'Provider saved',

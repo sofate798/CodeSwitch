@@ -8,7 +8,7 @@ import { listSnapshots, createSnapshot, applySnapshot, removeSnapshot, insertSna
 import { listBackups, restoreBackup, removeBackup } from '../services/backup'
 import { getLogs, getLogsForExport, clearLogs, log } from '../services/logger'
 import { proxyStatus, configureProxy, stopProxy, getProxyToken } from '../services/proxy'
-import { getDataDirInfo, migrateDataDir } from '../services/paths'
+import { getDataDirInfo, migrateDataDir, syncPendingMigration } from '../services/paths'
 import { applyTitleBarOverlay } from '../main/titleBar'
 import { encrypt, decrypt, keyTail, isCipher } from '../services/crypto'
 import { IDE_REGISTRY, resolvePath } from '../adapters/registry'
@@ -167,10 +167,14 @@ function isSameOrInside(target: string, root: string): boolean {
   return t === r || t.startsWith(r + path.sep.toLowerCase())
 }
 
-/** 收集允许在文件管理器中打开的路径集：userData + 注册表全部候选路径/其父目录 + 手动指定路径 */
+/**
+ * 收集允许在文件管理器中打开的路径集：userData + 各 IDE 配置文件及其所在目录 + 手动指定路径。
+ * 只给“文件型”路径补父目录：homeMarkers / detectPaths 多为家目录下的文件夹（如 ~/.gemini），
+ * 取其父目录就是整个用户目录，白名单形同虚设；它们本身也不是任何打开入口的目标，故不纳入。
+ */
 function openPathRoots(): string[] {
   const roots: string[] = [app.getPath('userData')]
-  const pushRaw = (tpl?: string | null): void => {
+  const pushFile = (tpl?: string | null): void => {
     const p = tpl ? resolvePath(tpl) : null
     if (p) {
       roots.push(p)
@@ -178,15 +182,18 @@ function openPathRoots(): string[] {
     }
   }
   for (const ide of IDE_REGISTRY) {
-    ide.configPaths.forEach(pushRaw)
-    ide.detectPaths.forEach(pushRaw)
-    ;(ide.homeMarkers ?? []).forEach(pushRaw)
+    ide.configPaths.forEach(pushFile)
     const s = ide.storage
-    if (s.kind === 'sqlite') s.dbPaths.forEach(pushRaw)
-    else s.paths.forEach(pushRaw)
-    if (s.kind === 'toml' && s.secretFile) pushRaw(s.secretFile.path)
+    if (s.kind === 'sqlite') s.dbPaths.forEach(pushFile)
+    else s.paths.forEach(pushFile)
+    if (s.kind === 'toml' && s.secretFile) pushFile(s.secretFile.path)
   }
-  for (const b of Object.values(store.get('ideBindings'))) if (b?.configPath) pushRaw(b.configPath)
+  for (const b of Object.values(store.get('ideBindings'))) {
+    if (b?.configPath) {
+      roots.push(b.configPath)
+      roots.push(path.dirname(b.configPath))
+    }
+  }
   return roots
 }
 
@@ -228,8 +235,9 @@ export function registerIpc(): void {
   // ---- Provider ----
   safeHandleValue('provider:list', () => {
     const list = store.get('providers') as Provider[]
-    // keyTail 内部已容错（失败返回 ''），不会抛异常；仅输出明文后 4 位供前端脱敏展示
-    return list.map((p) => ({ ...p, keyTail: keyTail(p.apiKey) }))
+    // keyTail 内部已容错（失败返回 ''），不会抛异常；仅输出明文后 4 位供前端脱敏展示。
+    // 密文本身渲染层用不到，不出主进程（编辑时 Key 留空即沿用旧值）
+    return list.map((p) => ({ ...p, apiKey: '', keyTail: keyTail(p.apiKey) }))
   })
   safeHandle('provider:save', (_e, input: Partial<Provider> & { protocol: Protocol }) => {
     const list: Provider[] = store.get('providers')
@@ -260,7 +268,7 @@ export function registerIpc(): void {
         updatedAt: now
       }
       store.set('providers', list)
-      return { ok: true, code: 'msg.provider.saveOk', data: list[idx] } satisfies OpResult<Provider>
+      return { ok: true, code: 'msg.provider.saveOk', data: { ...list[idx], apiKey: '' } } satisfies OpResult<Provider>
     }
 
     if (!clean.name || !clean.baseUrl || !clean.model || !clean.apiKey) {
@@ -279,7 +287,7 @@ export function registerIpc(): void {
     }
     list.push(np)
     store.set('providers', list)
-    return { ok: true, code: 'msg.provider.saveOk', data: np } satisfies OpResult<Provider>
+    return { ok: true, code: 'msg.provider.saveOk', data: { ...np, apiKey: '' } } satisfies OpResult<Provider>
   })
   safeHandle('provider:remove', async (_e, id: string) => {
     // 多键读改写（providers + ideBindings + snapshots + proxy）进串行队列，消除与 apply/reset 的并发竞态（Sam-M6）
@@ -687,7 +695,9 @@ export function registerIpc(): void {
   })
 
   // 重置软件：清除 CodeSwitch 全部本地数据（不触碰各 IDE 自身配置文件）
-  safeHandle('system:reset-all', async () => {
+  // 整体排进写队列：清空 backups/ 若与进行中的 apply 交错，会删掉它刚做的备份，其写入失败时便无从回滚。
+  // 队列内直接读写 store，不能再调 mutate（同一队列嵌套会互相等待而死锁）。
+  safeHandle('system:reset-all', () => runExclusive(async (): Promise<OpResult> => {
     try {
       // 停掉转发网关
       await stopProxy()
@@ -702,34 +712,33 @@ export function registerIpc(): void {
         }
       }
       // 重置 store 各键到默认值（保留主题/语言等纯显示偏好，避免重置后界面突变）
-      // 多键读改写在串行队列内一次完成，消除并发竞态（Sam-M6）
-      await mutate((s) => {
-        const prevSettings = s.get('settings')
-        s.set('providers', [])
-        s.set('snapshots', [])
-        s.set('backups', [])
-        s.set('ideBindings', {})
-        s.set('proxy', { enabled: false, port: 8787, providerId: null })
-        s.set('settings', {
-          theme: prevSettings.theme,
-          locale: prevSettings.locale,
-          autoLaunch: false,
-          dataDir: ''
-        })
+      const prevSettings = store.get('settings')
+      store.set('providers', [])
+      store.set('snapshots', [])
+      store.set('backups', [])
+      store.set('ideBindings', {})
+      store.set('proxy', { enabled: false, port: 8787, providerId: null })
+      store.set('settings', {
+        theme: prevSettings.theme,
+        locale: prevSettings.locale,
+        autoLaunch: false,
+        dataDir: ''
       })
       clearLogs()
       // 关闭开机自启
       app.setLoginItemSettings({ openAtLogin: false })
-      return { ok: true, code: 'msg.settings.resetDone' } satisfies OpResult
+      return { ok: true, code: 'msg.settings.resetDone' }
     } catch (e) {
       log('error', 'system:reset-all', (e as Error).message)
-      return { ok: false, code: 'msg.common.error' } satisfies OpResult
+      return { ok: false, code: 'msg.common.error' }
     }
-  })
+  }))
 
   // 重启应用（更改数据目录后生效）：先停网关释放端口再 relaunch
   safeHandle('system:relaunch', async () => {
     await stopProxy()
+    // app.exit 不触发 will-quit，迁移后的最终同步须在此显式执行
+    syncPendingMigration()
     app.relaunch()
     app.exit(0)
   })

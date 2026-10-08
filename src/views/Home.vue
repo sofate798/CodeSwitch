@@ -353,7 +353,8 @@ function batchReset() {
               <template #icon><n-icon :component="IconCheckmarkDone" :size="14" /></template>
               {{ t('home.generate') }}
             </n-button>
-            <n-button size="small" :disabled="!ide.installed || ide.status === 'default' || ide.capability !== 'auto'" @click="confirmReset(ide)">
+            <!-- assist 型也要能恢复：Zed 旧版直写过明文 Key，需由此清除（status 仅在探测到残留时才非 default） -->
+            <n-button size="small" :disabled="!ide.installed || ide.status === 'default' || ide.capability === 'manual'" @click="confirmReset(ide)">
               <template #icon><n-icon :component="IconRefresh" :size="14" /></template>
               {{ t('common.reset') }}
             </n-button>
