@@ -258,7 +258,11 @@ class MaxBodySizeError extends Error {
 
 function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
-    let data = ''
+    // 关键：按原始 Buffer 收集、仅在末尾一次性 concat + toString('utf8') 解码。
+    // 切勿在 data 事件里 `data += c`：那会把每个 chunk 独立按 utf8 解码，一个多字节
+    // 字符（中文/emoji）跨 TCP chunk 边界时会产生乱码，污染转发出去的请求体（中文 prompt 极常见）。
+    // 同时保留 c.length 的字节计数语义（Buffer.length = 字节数，与 setEncoding('utf8') 不同）。
+    const chunks: Buffer[] = []
     let size = 0
     let tooLarge = false
     req.on('data', (c: Buffer) => {
@@ -267,13 +271,15 @@ function readBody(req: http.IncomingMessage): Promise<any> {
       if (size > MAX_BODY_BYTES) {
         // 不销毁 socket：立即 reject 让 handler 回 413，响应先于连接关闭送达调用方
         tooLarge = true
+        chunks.length = 0
         reject(new MaxBodySizeError())
         return
       }
-      data += c
+      chunks.push(c)
     })
     req.on('end', () => {
       if (tooLarge) return
+      const data = Buffer.concat(chunks).toString('utf8')
       if (!data) return resolve({})
       try {
         const parsed = JSON.parse(data)
