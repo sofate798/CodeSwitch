@@ -279,14 +279,12 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
  * 由调用方 filter 掉，避免替换成空串产生 "\..." 之类的畸形根相对路径。
  */
 export function resolvePath(tpl: string): string | null {
-  let missing = false
-  const out = tpl.replace(/\$\{(\w+)\}/g, (_, name) => {
-    const v = process.env[name]
-    if (v == null || v === '') {
-      missing = true
-      return ''
-    }
-    return v
-  })
-  return missing ? null : out
+  const placeholderRe = /\$\{(\w+)\}/g
+  // 先校验：任一 ${VAR} 占位符对应环境变量缺失/为空，则整条路径判为无效。
+  // （用显式循环而非「闭包内改写外部布尔标志」，避免 TS 控制流分析把标志误判为恒 false。）
+  for (const match of tpl.matchAll(placeholderRe)) {
+    const v = process.env[match[1]]
+    if (v == null || v === '') return null
+  }
+  return tpl.replace(placeholderRe, (_, name: string) => process.env[name] ?? '')
 }

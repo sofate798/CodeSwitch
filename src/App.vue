@@ -37,6 +37,14 @@ const themeOverrides = {
     primaryColor: '#3b82f6',
     primaryColorHover: '#60a5fa',
     primaryColorPressed: '#2563eb'
+  },
+  // 深色主题下 Naive 默认把 primary 按钮文字/图标取为 baseColor（=#000 黑），
+  // 与自定义蓝色背景对比差、不易读。这里显式改为白色（浅色本就是白，两主题统一）。
+  Button: {
+    textColorPrimary: '#fff',
+    textColorHoverPrimary: '#fff',
+    textColorPressedPrimary: '#fff',
+    textColorFocusPrimary: '#fff'
   }
 }
 

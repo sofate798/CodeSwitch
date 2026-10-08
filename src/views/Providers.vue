@@ -28,7 +28,9 @@ const editing = ref<Provider | null>(null)
 const saving = ref(false)
 const testingId = ref<string | null>(null)
 // Jack-Med14：测试结果显示改为按消息码本地化后的文案（OpResult.code/args），不再依赖旧 r.message
-const testResult = ref<Record<string, { ok: boolean; text: string }>>({})
+// 值类型显式允许 undefined：仅被测试过的 Provider 才有对应键，未测试键运行时为 undefined
+type TestEntry = { ok: boolean; text: string }
+const testResult = ref<Record<string, TestEntry | undefined>>({})
 
 const formRef = ref<FormInst | null>(null)
 const form = ref({
@@ -184,9 +186,9 @@ watch(() => store.providers, () => { testResult.value = {} })
           <div class="p-row"><span class="k">Model</span><span class="v">{{ p.model }}</span></div>
           <div class="p-row"><span class="k">API Key</span><span class="v mono">{{ keyDisplay(p) }}</span></div>
         </div>
-        <div v-if="testResult[p.id]" class="p-test" :class="{ ok: testResult[p.id].ok }">
-          <n-icon :component="testResult[p.id].ok ? IconCheckmarkCircle : IconCloseCircle" :size="12" />
-          {{ testResult[p.id].text }}
+        <div v-if="testResult[p.id]" class="p-test" :class="{ ok: testResult[p.id]?.ok }">
+          <n-icon :component="testResult[p.id]?.ok ? IconCheckmarkCircle : IconCloseCircle" :size="12" />
+          {{ testResult[p.id]?.text }}
         </div>
         <div class="p-actions">
           <n-button size="tiny" :loading="testingId === p.id" @click="test(p)">
