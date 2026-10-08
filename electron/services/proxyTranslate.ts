@@ -68,12 +68,12 @@ function anthropicToolsToOpenai(tools: any): any[] | undefined {
   return out.length ? out : undefined
 }
 
-/** OpenAI tool_choice → Anthropic tool_choice */
+/** OpenAI tool_choice → Anthropic tool_choice。
+ * 注意：Anthropic 无 `none`；`none` 必须在调用方通过「不传 tools」实现，绝不能映射成 auto（否则工具仍可用）。 */
 function openaiToolChoiceToAnthropic(tc: any): any {
-  if (tc == null) return undefined
+  if (tc == null || tc === 'none') return undefined
   if (tc === 'auto') return { type: 'auto' }
   if (tc === 'required') return { type: 'any' }
-  if (tc === 'none') return { type: 'auto', disable_parallel_tool_use: true }
   if (typeof tc === 'object' && tc.type === 'function' && tc.function?.name) return { type: 'tool', name: tc.function.name }
   return undefined
 }
@@ -130,10 +130,13 @@ export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
   if (typeof body.temperature === 'number') req.temperature = body.temperature
   if (typeof body.top_p === 'number') req.top_p = body.top_p
   if (body.stop) req.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop]
-  const tools = openaiToolsToAnthropic(body.tools)
-  if (tools) req.tools = tools
-  const tc = openaiToolChoiceToAnthropic(body.tool_choice)
-  if (tc) req.tool_choice = tc
+  // tool_choice=none：Anthropic 无对应枚举，等价做法是不附带 tools（否则映射成 auto 会让模型仍可调工具）
+  if (body.tool_choice !== 'none') {
+    const tools = openaiToolsToAnthropic(body.tools)
+    if (tools) req.tools = tools
+    const tc = openaiToolChoiceToAnthropic(body.tool_choice)
+    if (tc) req.tool_choice = tc
+  }
   return req
 }
 

@@ -275,24 +275,27 @@ export function registerIpc(): void {
     store.set('providers', list)
     return { ok: true, code: 'msg.provider.saveOk', data: np } satisfies OpResult<Provider>
   })
-  safeHandle('provider:remove', (_e, id: string) => {
-    store.set('providers', (store.get('providers') as Provider[]).filter((p: Provider) => p.id !== id))
-    // 清理 ideBindings / snapshots 中对该供应商的残留引用
-    const bindings = store.get('ideBindings')
-    for (const [ideId, v] of Object.entries(bindings)) {
-      if (v.providerId === id) bindings[ideId] = { ...v, providerId: null }
-    }
-    store.set('ideBindings', bindings)
-    const snapshots = store.get('snapshots')
-    for (const s of snapshots) {
-      for (const [ideId, b] of Object.entries(s.ideBindings)) {
-        if (b.providerId === id) s.ideBindings[ideId] = { providerId: null }
+  safeHandle('provider:remove', async (_e, id: string) => {
+    // 多键读改写（providers + ideBindings + snapshots + proxy）进串行队列，消除与 apply/reset 的并发竞态（Sam-M6）
+    await mutate((s) => {
+      s.set('providers', (s.get('providers') as Provider[]).filter((p: Provider) => p.id !== id))
+      // 清理 ideBindings / snapshots 中对该供应商的残留引用
+      const bindings = s.get('ideBindings')
+      for (const [ideId, v] of Object.entries(bindings)) {
+        if (v.providerId === id) bindings[ideId] = { ...v, providerId: null }
       }
-    }
-    store.set('snapshots', snapshots)
-    // 若该供应商正是转发网关的目标，解除绑定
-    const proxy = store.get('proxy')
-    if (proxy?.providerId === id) store.set('proxy', { ...proxy, providerId: null })
+      s.set('ideBindings', bindings)
+      const snapshots = s.get('snapshots')
+      for (const snap of snapshots) {
+        for (const [ideId, b] of Object.entries(snap.ideBindings)) {
+          if (b.providerId === id) snap.ideBindings[ideId] = { providerId: null }
+        }
+      }
+      s.set('snapshots', snapshots)
+      // 若该供应商正是转发网关的目标，解除绑定
+      const proxy = s.get('proxy')
+      if (proxy?.providerId === id) s.set('proxy', { ...proxy, providerId: null })
+    })
     return { ok: true, code: 'msg.provider.removeOk' } satisfies OpResult
   })
   safeHandle('provider:test', (_e, id: string) => {
@@ -487,8 +490,11 @@ export function registerIpc(): void {
     const list: Provider[] = store.get('providers')
     const idMap = new Map<string, string>()
     const now = Date.now()
+    // 文案 msg.snapshot.importOk 的 {count} 是「快照内嵌的供应商数」（新建或同名复用均计入），绝不能写死 1
+    let providerCount = 0
     for (const ep of Array.isArray(parsed.providers) ? parsed.providers : []) {
       if (!ep || typeof ep.name !== 'string' || (ep.protocol !== 'openai' && ep.protocol !== 'anthropic')) continue
+      providerCount++
       const existing = list.find((p) => p.name === ep.name)
       if (existing) {
         if (ep.refId) idMap.set(ep.refId, existing.id)
@@ -529,7 +535,7 @@ export function registerIpc(): void {
       // 透传服务层结构化错误码/参数；缺失时兜底为通用错误
       return snap.code ? { ok: false, code: snap.code, args: snap.args } satisfies OpResult : { ok: false, code: 'msg.common.error' } satisfies OpResult
     }
-    return { ok: true, code: 'msg.snapshot.importOk', args: { count: 1, name: snap.data?.name ?? '' } } satisfies OpResult
+    return { ok: true, code: 'msg.snapshot.importOk', args: { count: providerCount, name: snap.data?.name ?? '' } } satisfies OpResult
   })
 
   // ---- Backup ----
@@ -624,9 +630,9 @@ export function registerIpc(): void {
       log('warn', 'system:open-path', `rejected path outside allowed roots: ${targetPath}`)
       return
     }
-    // 文件存在则定位选中，否则打开其所在目录
+    // 文件存在则定位选中，否则打开其所在目录（绝不能对缺失路径调 openPath——会失败且违背注释意图）
     if (fs.existsSync(targetPath)) shell.showItemInFolder(targetPath)
-    else shell.openPath(targetPath)
+    else shell.openPath(path.dirname(targetPath))
   })
 
   // 数据目录：获取当前生效目录与自定义目录

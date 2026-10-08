@@ -47,14 +47,17 @@ export async function applySnapshot(id: string): Promise<OpResult> {
       errors.push(`${ideId}: ${r.code ?? 'reset-failed'}`)
     }
   }
-  // 再按快照绑定应用：不可写 IDE（notWritable / canceled）跳过，不计失败
+  // 再按快照绑定应用：不可写 IDE（notWritable / canceled）与目标不存在（notFound，未安装）跳过，不计失败
   for (const [ideId, binding] of Object.entries(snap.ideBindings)) {
     if (!binding.providerId) continue
     if (!known.has(ideId)) { skipped++; continue }
     const r = await applyProvider(ideId, binding.providerId)
     if (r.canceled || r.code === 'msg.ide.notWritable') continue
-    if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'apply-failed'}`)
-    else applied++
+    if (!r.ok) {
+      // 与重置阶段对齐：未安装 IDE 的 notFound 是预期内无操作，绝不能把整体误报为 applyFailed
+      if (r.code === 'msg.ide.notFound') { skipped++; continue }
+      errors.push(`${ideId}: ${r.code ?? 'apply-failed'}`)
+    } else applied++
   }
   log(
     errors.length === 0 ? 'info' : 'warn',
