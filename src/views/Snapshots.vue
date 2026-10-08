@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   NCard, NButton, NSpace, NTag, NModal, NInput, NEmpty, useMessage, useDialog
 } from 'naive-ui'
-import { AddOutline as IconAddOutline, CameraOutline as IconCameraOutline, TrashOutline as IconTrashOutline, CheckmarkDoneOutline as IconCheckmarkDone } from '@vicons/ionicons5'
+import { AddOutline as IconAddOutline, CameraOutline as IconCameraOutline, TrashOutline as IconTrashOutline, CheckmarkDoneOutline as IconCheckmarkDone, DownloadOutline as IconExport, CloudUploadOutline as IconImport } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
 
 const store = useAppStore()
@@ -49,8 +49,24 @@ function remove(id: string) {
   })
 }
 
+async function doExport(id: string) {
+  const r = await window.api.snapshot.export(id)
+  if (r.ok) message.success(t('snapshots.exportDone'))
+  else if (r.message !== '已取消') message.error(r.message)
+}
+
+async function doImport() {
+  const r = await window.api.snapshot.import()
+  if (r.ok) {
+    message.success(r.message)
+    await store.refreshAll()
+  } else if (r.message !== '已取消') {
+    message.error(r.message)
+  }
+}
+
 function fmt(ts: number) {
-  return new Date(ts).toLocaleString(t('settings.locale') === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false })
+  return new Date(ts).toLocaleString(store.settings.locale === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false })
 }
 </script>
 
@@ -61,10 +77,16 @@ function fmt(ts: number) {
         <div class="page-title">{{ t('snapshots.title') }}</div>
         <div class="page-sub">{{ t('snapshots.subtitle') }}</div>
       </div>
-      <n-button type="primary" @click="modalShow = true">
-        <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
-        {{ t('snapshots.createTitle') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button @click="doImport">
+          <template #icon><n-icon :component="IconImport" :size="16" /></template>
+          {{ t('snapshots.importBtn') }}
+        </n-button>
+        <n-button type="primary" @click="modalShow = true">
+          <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
+          {{ t('snapshots.createTitle') }}
+        </n-button>
+      </n-space>
     </div>
 
     <n-empty v-if="store.snapshots.length === 0" :description="t('snapshots.empty')" />
@@ -82,7 +104,10 @@ function fmt(ts: number) {
           <n-button size="tiny" type="primary" :loading="applyingId === s.id" @click="apply(s.id)">
             <template #icon><n-icon :component="IconCheckmarkDone" :size="12" /></template>{{ t('common.apply') }}
           </n-button>
-          <n-button size="tiny" type="error" @click="remove(s.id)">
+          <n-button size="tiny" @click="doExport(s.id)" :title="t('snapshots.exportBtn')">
+            <template #icon><n-icon :component="IconExport" :size="12" /></template>
+          </n-button>
+          <n-button size="tiny" type="error" @click="remove(s.id)" :title="t('common.delete')">
             <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
           </n-button>
         </div>

@@ -50,3 +50,29 @@ export function removeSnapshot(id: string): void {
   store.set('snapshots', store.get('snapshots').filter((s) => s.id !== id))
   log('info', 'snapshot-remove', id)
 }
+
+/**
+ * 直接插入一个给定绑定关系的快照（用于 .csnap 导入，绑定已重映射到本机供应商 id）。
+ * 名称与现有快照重复时自动追加后缀，避免混淆。
+ */
+export function insertSnapshot(input: { name: string; description?: string; createdAt?: number; ideBindings: Record<string, { providerId: string | null }> }): Snapshot {
+  const list = store.get('snapshots')
+  const names = new Set(list.map((s) => s.name))
+  let name = input.name?.trim() || '导入的快照'
+  if (names.has(name)) {
+    let i = 2
+    while (names.has(`${name} (${i})`)) i++
+    name = `${name} (${i})`
+  }
+  const snap: Snapshot = {
+    id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    description: input.description ?? '',
+    createdAt: typeof input.createdAt === 'number' ? input.createdAt : Date.now(),
+    ideBindings: input.ideBindings ?? {}
+  }
+  list.push(snap)
+  store.set('snapshots', list)
+  log('info', 'snapshot-import', name)
+  return snap
+}

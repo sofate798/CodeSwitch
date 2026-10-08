@@ -124,7 +124,10 @@ export default {
     ideCount: '{count} IDEs',
     nameRequired: 'Please enter a snapshot name',
     applySuccess: "Snapshot '{name}' applied",
-    applyFailed: 'Partial failure: {errors}'
+    applyFailed: 'Partial failure: {errors}',
+    importBtn: 'Import',
+    exportBtn: 'Export',
+    exportDone: 'Snapshot exported'
   },
   backups: {
     title: 'Backup Management',
@@ -151,7 +154,10 @@ export default {
     clear: 'Clear',
     clearConfirm: 'Clear all operation logs?',
     clearTitle: 'Clear Logs',
-    empty: 'No logs yet'
+    empty: 'No logs yet',
+    exportTxt: 'Export TXT',
+    exportJson: 'Export JSON',
+    exportDone: 'Exported {count} log entries'
   },
   settings: {
     title: 'Settings',
@@ -170,7 +176,35 @@ export default {
     checkUpdate: 'Check for Updates',
     checking: 'Checking for updates...',
     upToDate: 'You are up to date',
-    updateAvailable: 'Update available: {version}'
+    updateAvailable: 'Update available: {version}',
+    update: 'Updates',
+    dataDirChange: 'Change Folder',
+    dataDirCustom: 'Using a custom data directory. A restart is required after changing it.',
+    dataDirChangeTitle: 'Change Data Directory',
+    dataDirChangeConfirm: 'Your data (providers, snapshots, backups, logs) will be migrated to the new folder. The old folder is left untouched. Continue?',
+    restartTitle: 'Restart Required',
+    restartConfirm: 'The data directory has changed. Restart CodeSwitch to apply. Restart now?',
+    restartNow: 'Restart Now',
+    restartLater: 'Restart Later',
+    dangerTitle: 'Danger Zone',
+    resetDesc: 'Clear all local CodeSwitch data (providers, snapshots, backups, logs, IDE bindings, gateway and settings). Config files inside each IDE are not modified.',
+    resetBtn: 'Reset Software',
+    resetTitle: 'Reset Software',
+    resetConfirm: 'This irreversibly clears all local CodeSwitch data (including encrypted API keys). Configs already written into your IDEs are NOT rolled back; reset them individually under IDE Management if needed. Continue?',
+    resetDone: 'All data has been reset',
+    proxy: {
+      title: 'Local Forwarding Gateway',
+      subtitle: 'OpenAI / Anthropic compatible proxy that forwards to the selected provider',
+      running: 'Running',
+      stopped: 'Stopped',
+      target: 'Forward To',
+      targetPlaceholder: 'Select a provider as the forwarding target',
+      port: 'Port',
+      url: 'Gateway URL',
+      copy: 'Copy',
+      copied: 'Gateway URL copied',
+      hint: 'When enabled, exposes an OpenAI/Anthropic-compatible endpoint on 127.0.0.1 with cross-protocol translation and streaming.\n• Any client that allows a custom Base URL (Cline / Continue / Roo, Codex, Gemini CLI, scripts) can use the URL above to reuse the current provider.\n• Cursor Free blocks custom endpoints for its built-in AI on the server side; install a free OpenAI-compatible extension (e.g. Cline / Continue) inside Cursor and point its Base URL to this gateway to use custom providers without a subscription.'
+    }
   },
   tray: {
     show: 'Show Window',

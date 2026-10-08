@@ -1,8 +1,11 @@
 import { app, shell, BrowserWindow, Tray, Menu, ipcMain } from 'electron'
+// 必须最先执行：在 electron-store 实例化前重定向 userData（自定义数据目录）
+import './bootstrap'
 import path from 'node:path'
 import { registerIpc } from '../ipc/handlers'
 import { initLogger, log } from '../services/logger'
 import { store } from '../services/store'
+import { autoStartProxy, stopProxy } from '../services/proxy'
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -115,10 +118,16 @@ app.whenReady().then(() => {
   setupAutoUpdater()
   createWindow()
   createTray()
+  // 若用户曾启用转发网关，开机自动拉起
+  autoStartProxy().catch((e) => log('error', 'proxy', `auto-start failed: ${(e as Error).message}`))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  stopProxy().catch(() => {})
 })
 
 app.on('window-all-closed', () => {

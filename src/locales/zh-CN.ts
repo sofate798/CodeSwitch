@@ -124,7 +124,10 @@ export default {
     ideCount: '{count} 个 IDE',
     nameRequired: '请填写快照名称',
     applySuccess: '已应用快照「{name}」',
-    applyFailed: '部分失败: {errors}'
+    applyFailed: '部分失败: {errors}',
+    importBtn: '导入',
+    exportBtn: '导出',
+    exportDone: '快照已导出'
   },
   backups: {
     title: '备份管理',
@@ -151,7 +154,10 @@ export default {
     clear: '清空',
     clearConfirm: '确定清空所有操作日志？',
     clearTitle: '清空日志',
-    empty: '暂无日志'
+    empty: '暂无日志',
+    exportTxt: '导出 TXT',
+    exportJson: '导出 JSON',
+    exportDone: '已导出 {count} 条日志'
   },
   settings: {
     title: '设置',
@@ -170,7 +176,35 @@ export default {
     checkUpdate: '检查更新',
     checking: '正在检查更新...',
     upToDate: '已是最新版本',
-    updateAvailable: '发现新版本：{version}'
+    updateAvailable: '发现新版本：{version}',
+    update: '软件更新',
+    dataDirChange: '更改目录',
+    dataDirCustom: '当前使用自定义数据目录，更改后需重启生效。',
+    dataDirChangeTitle: '更改数据目录',
+    dataDirChangeConfirm: '将把当前数据（供应商、快照、备份、日志）迁移到新目录。原目录数据不会被删除。确定继续？',
+    restartTitle: '需要重启',
+    restartConfirm: '数据目录已更改，重启 CodeSwitch 后生效。是否立即重启？',
+    restartNow: '立即重启',
+    restartLater: '稍后手动重启',
+    dangerTitle: '危险操作',
+    resetDesc: '清除 CodeSwitch 全部本地数据（供应商、快照、备份、日志、IDE 绑定、网关与设置）。不会修改各 IDE 自身的配置文件。',
+    resetBtn: '重置软件',
+    resetTitle: '重置软件',
+    resetConfirm: '此操作将不可恢复地清除 CodeSwitch 全部本地数据（包括加密的 API Key）。各 IDE 已写入的配置不会被回滚，如需恢复默认请在「IDE 管理」里逐个重置。确定继续？',
+    resetDone: '已重置全部数据',
+    proxy: {
+      title: '本地转发网关',
+      subtitle: 'OpenAI / Anthropic 兼容代理，把请求转发到选定供应商',
+      running: '运行中',
+      stopped: '已停止',
+      target: '转发目标',
+      targetPlaceholder: '选择一个供应商作为转发目标',
+      port: '监听端口',
+      url: '网关地址',
+      copy: '复制',
+      copied: '已复制网关地址',
+      hint: '启用后在本机 127.0.0.1 提供 OpenAI/Anthropic 兼容接口，支持两种协议互转与流式输出。\n• 任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）填入上面的地址即可复用当前供应商。\n• Cursor 免费版的自带 AI 被官方服务端限制、无法自定义端点；可在 Cursor 内安装免费的 OpenAI 兼容扩展（如 Cline / Continue），把 Base URL 指向本网关，即可免订阅使用自定义供应商。'
+    }
   },
   tray: {
     show: '显示主窗口',

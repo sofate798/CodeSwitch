@@ -26,7 +26,9 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcInvoke('snapshot:list'),
     create: (name: string, desc?: string) => ipcInvoke('snapshot:create', name, desc ?? ''),
     apply: (id: string) => ipcInvoke('snapshot:apply', id),
-    remove: (id: string) => ipcInvoke('snapshot:remove', id)
+    remove: (id: string) => ipcInvoke('snapshot:remove', id),
+    export: (id: string) => ipcInvoke('snapshot:export', id),
+    import: () => ipcInvoke('snapshot:import')
   },
   backup: {
     list: (ideId?: string) => ipcInvoke('backup:list', ideId),
@@ -35,17 +37,26 @@ contextBridge.exposeInMainWorld('api', {
   },
   log: {
     list: () => ipcInvoke('log:list'),
-    clear: () => ipcInvoke('log:clear')
+    clear: () => ipcInvoke('log:clear'),
+    export: (format: 'txt' | 'json') => ipcInvoke('log:export', format)
   },
   settings: {
     get: () => ipcInvoke('settings:get'),
     set: (patch: any) => ipcInvoke('settings:set', patch)
   },
+  proxy: {
+    status: () => ipcInvoke('proxy:status'),
+    configure: (patch: any) => ipcInvoke('proxy:configure', patch)
+  },
   system: {
     pickFile: (defaultPath?: string) => ipcInvoke('system:pick-file', defaultPath),
     openDataDir: () => ipcInvoke('system:open-data-dir'),
     openPath: (targetPath: string) => ipcInvoke('system:open-path', targetPath),
-    checkUpdate: () => ipcInvoke('system:check-update')
+    checkUpdate: () => ipcInvoke('system:check-update'),
+    getDataDir: () => ipcInvoke('system:get-data-dir'),
+    setDataDir: () => ipcInvoke('system:set-data-dir'),
+    resetAll: () => ipcInvoke('system:reset-all'),
+    relaunch: () => ipcInvoke('system:relaunch')
   }
 })
 

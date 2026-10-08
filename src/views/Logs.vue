@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { NButton, NEmpty, useDialog } from 'naive-ui'
-import { TrashOutline as IconTrashOutline } from '@vicons/ionicons5'
+import { NButton, NSpace, NEmpty, useDialog, useMessage } from 'naive-ui'
+import { TrashOutline as IconTrashOutline, DownloadOutline as IconDownload } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
 
 const store = useAppStore()
 const { t } = useI18n()
 const dialog = useDialog()
+const message = useMessage()
 
 function fmt(ts: number) {
-  return new Date(ts).toLocaleString(t('settings.locale') === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false })
+  return new Date(ts).toLocaleString(store.settings.locale === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false })
+}
+async function doExport(format: 'txt' | 'json') {
+  const r = await window.api.log.export(format)
+  if (r.ok) message.success(t('logs.exportDone', { count: r.count ?? 0 }))
+  else if (r.message !== '已取消') message.error(r.message)
 }
 function clear() {
   dialog.warning({
@@ -27,9 +33,17 @@ function clear() {
         <div class="page-title">{{ t('logs.title') }}</div>
         <div class="page-sub">{{ t('logs.subtitle') }}</div>
       </div>
-      <n-button size="small" @click="clear">
-        <template #icon><n-icon :component="IconTrashOutline" :size="14" /></template>{{ t('logs.clear') }}
-      </n-button>
+      <n-space :size="8">
+        <n-button size="small" :disabled="store.logs.length === 0" @click="doExport('txt')">
+          <template #icon><n-icon :component="IconDownload" :size="14" /></template>{{ t('logs.exportTxt') }}
+        </n-button>
+        <n-button size="small" :disabled="store.logs.length === 0" @click="doExport('json')">
+          <template #icon><n-icon :component="IconDownload" :size="14" /></template>{{ t('logs.exportJson') }}
+        </n-button>
+        <n-button size="small" @click="clear">
+          <template #icon><n-icon :component="IconTrashOutline" :size="14" /></template>{{ t('logs.clear') }}
+        </n-button>
+      </n-space>
     </div>
 
     <n-empty v-if="store.logs.length === 0" :description="t('logs.empty')" />

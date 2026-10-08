@@ -149,6 +149,27 @@ export interface AppSettings {
   dataDir: string
 }
 
+/** 本地转发网关配置 */
+export interface ProxyConfig {
+  /** 是否启用网关 */
+  enabled: boolean
+  /** 监听端口（127.0.0.1） */
+  port: number
+  /** 转发目标供应商 id（null 表示未选择） */
+  providerId: string | null
+}
+
+/** 本地转发网关运行状态 */
+export interface ProxyStatus {
+  enabled: boolean
+  running: boolean
+  port: number
+  url: string
+  providerId: string | null
+  providerName: string | null
+  error?: string
+}
+
 // 渲染进程通过 window.api 调用的类型
 export interface API {
   ide: {
@@ -177,6 +198,10 @@ export interface API {
     create(name: string, description?: string): Promise<Snapshot>
     apply(id: string): Promise<{ ok: boolean; message: string }>
     remove(id: string): Promise<void>
+    /** 导出单个快照为 .csnap 文件（内嵌其引用的供应商，含明文 Key，主进程弹保存对话框） */
+    export(id: string): Promise<{ ok: boolean; message: string }>
+    /** 从 .csnap 文件导入快照（主进程弹打开对话框），自动导入内嵌供应商并重映射绑定 */
+    import(): Promise<{ ok: boolean; message: string; count?: number }>
   }
   backup: {
     list(ideId?: string): Promise<BackupEntry[]>
@@ -186,10 +211,18 @@ export interface API {
   log: {
     list(): Promise<LogEntry[]>
     clear(): Promise<void>
+    /** 导出当前已加载的日志为 txt 或 json（主进程弹保存对话框） */
+    export(format: 'txt' | 'json'): Promise<{ ok: boolean; message: string; count?: number }>
   }
   settings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  proxy: {
+    /** 获取网关状态（是否运行 / 端口 / URL / 目标供应商） */
+    status(): Promise<ProxyStatus>
+    /** 修改配置并按 enabled 启停（端口变化会重启） */
+    configure(patch: Partial<ProxyConfig>): Promise<ProxyStatus>
   }
   system: {
     pickFile(defaultPath?: string): Promise<string | null>
@@ -197,6 +230,14 @@ export interface API {
     /** 在系统文件管理器中定位并选中指定文件 */
     openPath(targetPath: string): Promise<void>
     checkUpdate(): Promise<{ pending: boolean; available: boolean; version?: string; message: string }>
+    /** 获取数据目录：current=实际生效目录，custom=用户自定义目录（未设置为 null） */
+    getDataDir(): Promise<{ current: string; custom: string | null }>
+    /** 选择并迁移到新的数据目录（弹目录选择框）；成功后需重启应用生效 */
+    setDataDir(): Promise<{ ok: boolean; message: string; needRestart?: boolean }>
+    /** 重置软件：清除 CodeSwitch 全部本地数据（供应商/快照/备份/日志/绑定/网关/设置） */
+    resetAll(): Promise<{ ok: boolean; message: string }>
+    /** 重启应用（更改数据目录后生效） */
+    relaunch(): Promise<void>
   }
 }
 

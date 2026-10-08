@@ -8,7 +8,8 @@ import {
 import {
   AddOutline as IconAddOutline, CreateOutline as IconCreateOutline,
   TrashOutline as IconTrashOutline, FlashOutline as IconFlashOutline,
-  CheckmarkCircle as IconCheckmarkCircle, CloseCircle as IconCloseCircle
+  CheckmarkCircle as IconCheckmarkCircle, CloseCircle as IconCloseCircle,
+  DownloadOutline as IconExport, CloudUploadOutline as IconImport
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
 import IconLogoOpenAI from '../icons/IconLogoOpenAI.vue'
@@ -104,6 +105,22 @@ function maskKey(cipher: string): string {
   if (!cipher) return ''
   return 'sk-****'
 }
+
+async function doExport() {
+  const r = await window.api.provider.export()
+  if (r.ok) message.success(t('providers.exportDone', { count: r.count ?? 0 }))
+  else if (r.message && r.message !== '已取消') message.error(r.message)
+}
+
+async function doImport() {
+  const r = await window.api.provider.import()
+  if (r.ok) {
+    message.success(t('providers.importDone', { count: r.count ?? 0 }))
+    await store.refreshAll()
+  } else if (r.message && r.message !== '已取消') {
+    message.error(r.message)
+  }
+}
 </script>
 
 <template>
@@ -113,10 +130,20 @@ function maskKey(cipher: string): string {
         <div class="page-title">{{ t('providers.title') }}</div>
         <div class="page-sub">{{ t('providers.subtitle') }}</div>
       </div>
-      <n-button type="primary" @click="openCreate">
-        <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
-        {{ t('providers.createTitle') }}
-      </n-button>
+      <n-space>
+        <n-button @click="doImport">
+          <template #icon><n-icon :component="IconImport" :size="16" /></template>
+          {{ t('providers.importBtn') }}
+        </n-button>
+        <n-button @click="doExport">
+          <template #icon><n-icon :component="IconExport" :size="16" /></template>
+          {{ t('providers.exportBtn') }}
+        </n-button>
+        <n-button type="primary" @click="openCreate">
+          <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
+          {{ t('providers.createTitle') }}
+        </n-button>
+      </n-space>
     </div>
 
     <n-empty v-if="store.providers.length === 0" :description="t('providers.empty')" />

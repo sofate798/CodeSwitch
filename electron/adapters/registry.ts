@@ -40,7 +40,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['openAiApiKey', 'anthropicOverrideApiKey', 'apiKey'],
       encryptSecret: true
     },
-    note: 'Cursor 需 Pro 及以上订阅才支持自定义 API；写入前请先完全关闭 Cursor。'
+    note: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 → 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。'
   },
   {
     id: 'windsurf',
