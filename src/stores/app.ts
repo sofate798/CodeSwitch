@@ -18,6 +18,22 @@ export const useAppStore = defineStore('app', () => {
   const installedIDEs = computed(() => ides.value.filter((i) => i.installed))
   const customizedCount = computed(() => ides.value.filter((i) => i.status === 'customized').length)
 
+  // 主题解析的单一数据源：'system' 需跟随 OS 实际明暗偏好，绝不能把 'system' 当深色。
+  // 全局只建一次 matchMedia 监听；App.vue / Home / Providers 统一读 store.isDark，
+  // 避免各处各写 theme==='light' 判定导致 system+浅色 OS 下配色背离 data-theme。
+  const prefersLight = ref(false)
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    const mq = window.matchMedia('(prefers-color-scheme: light)')
+    prefersLight.value = mq.matches
+    mq.addEventListener('change', (e: MediaQueryListEvent) => { prefersLight.value = e.matches })
+  }
+  const isDark = computed(() => {
+    const mode = settings.value.theme
+    if (mode === 'light') return false
+    if (mode === 'dark') return true
+    return !prefersLight.value // 'system'：跟随 OS 偏好
+  })
+
   // 采用 allSettled：任一分片失败也保留其余成功数据；本函数绝不向外抛异常，
   // 避免 App.vue onMounted 产生未处理的 Promise rejection。
   async function refreshAll() {
@@ -74,7 +90,7 @@ export const useAppStore = defineStore('app', () => {
   return {
     ides, providers, snapshots, logs, settings,
     loading, error,
-    installedIDEs, customizedCount,
+    installedIDEs, customizedCount, isDark,
     refreshAll, refreshSettings, providerName
   }
 })

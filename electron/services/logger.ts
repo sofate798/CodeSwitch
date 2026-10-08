@@ -80,6 +80,21 @@ function rotateLogs(): void {
       // 单个文件清理失败忽略
     }
   }
+  // 滚动切分产生的 app-<date>.log.<n> 不在 listLogFiles（仅 .endsWith('.log')）集合内，
+  // 须单独纳入保留期清理，否则长期运行下切分文件无限累积（clearLogs 已处理，但常规轮转也要收）。
+  try {
+    for (const name of fs.readdirSync(logDir)) {
+      if (!/\.log\.\d+$/.test(name)) continue
+      const f = path.join(logDir, name)
+      try {
+        if (fs.statSync(f).mtimeMs < cutoff) fs.rmSync(f, { force: true })
+      } catch {
+        // 单个切分文件清理失败忽略
+      }
+    }
+  } catch {
+    // 目录读取失败忽略
+  }
   // 当天文件大小上限滚动
   try {
     if (fs.existsSync(logFile) && fs.statSync(logFile).size > MAX_FILE_BYTES) {

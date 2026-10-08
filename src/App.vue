@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -39,7 +39,7 @@ const themeOverrides = computed(() => ({
     primaryColor: '#3b82f6',
     primaryColorHover: '#60a5fa',
     primaryColorPressed: '#2563eb',
-    ...(isDark.value
+    ...(store.isDark
       ? {
           bodyColor: '#131419',
           cardColor: '#21232c',
@@ -98,22 +98,9 @@ const themeOverrides = computed(() => ({
   }
 }))
 
-// Jack-High1：跟随系统主题。用 matchMedia 建立对 OS 配色的响应式监听，
-// 'system' 模式下依据系统实际明/暗偏好实时切换 Naive theme 与 <html> data-theme。
-const mediaQuery = window.matchMedia('(prefers-color-scheme: light)')
-const prefersLight = ref(mediaQuery.matches)
-function onMediaChange(e: MediaQueryListEvent) { prefersLight.value = e.matches }
-
-// 综合用户模式与系统偏好，解析出最终是否为深色。
-const isDark = computed(() => {
-  const mode = store.settings.theme
-  if (mode === 'light') return false
-  if (mode === 'dark') return true
-  return !prefersLight.value // 'system'：跟随 OS 偏好
-})
-
-// 深色用 Naive darkTheme，浅色用默认主题（null）。
-const activeTheme = computed(() => (isDark.value ? darkTheme : null))
+// Jack-High1：主题解析（含 'system' 跟随 OS 明暗）已上移到 store.isDark 单一数据源，
+// matchMedia 监听也集中于 store；这里仅据解析结果选择 Naive 主题对象。
+const activeTheme = computed(() => (store.isDark ? darkTheme : null))
 
 // 动态走查发现：n-config-provider 未传 locale 时，Naive 组件内置文案（下拉“请选择”、输入框“请输入”等）
 // 恒为库默认英文，与界面语言脱节。故随应用 locale 联动传入组件语言包与日期语言包。
@@ -121,7 +108,7 @@ const naiveLocale = computed(() => (store.settings.locale === 'en-US' ? enUS : z
 const naiveDateLocale = computed(() => (store.settings.locale === 'en-US' ? dateEnUS : dateZhCN))
 
 // 将同一选择同步到 <html data-theme>，让 main.css 的自定义变量（--bg-* / --text-* 等）跟随切换。
-watch(isDark, (dark) => {
+watch(() => store.isDark, (dark) => {
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
 }, { immediate: true })
 
@@ -130,16 +117,9 @@ const installedCount = computed(() => store.installedIDEs.length)
 const routeTitle = computed(() => t(String(route.meta.titleKey ?? '')))
 
 onMounted(() => {
-  // 建立系统主题监听（OS 偏好变化时实时更新）。
-  mediaQuery.addEventListener('change', onMediaChange)
   // refreshAll / refreshSettings 内部均已 try/catch 兜底、绝不向外抛（值型通道失败会 reject，已在内接住），这里无需再 .catch。
   store.refreshAll()
   store.refreshSettings()
-})
-
-onBeforeUnmount(() => {
-  // 组件卸载时清理监听，避免泄漏。
-  mediaQuery.removeEventListener('change', onMediaChange)
 })
 
 function nav(path: string) { router.push(path) }

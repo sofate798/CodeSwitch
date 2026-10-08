@@ -331,6 +331,24 @@ function pruneStaleIdeBindings(): void {
   }
 }
 
+// ---------------- 单实例锁 ----------------
+
+/**
+ * 本应用关闭窗口仅隐藏到托盘（常驻后台），若无单实例锁，二次启动会产生两个进程：
+ * 共用同一 userData（electron-store config.json 并发写有损坏风险）、网关端口 EADDRINUSE、
+ * 双托盘图标。抢锁失败直接退出；已在运行的实例收到 second-instance 时唤起并聚焦主窗口。
+ */
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win) return
+    if (!win.isVisible()) win.show()
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+}
+
 app.whenReady().then(() => {
   initLogger()
   registerIpc()

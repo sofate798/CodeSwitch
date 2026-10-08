@@ -44,7 +44,8 @@ const form = ref({
 
 // C1：协议徽标颜色随主题取 light/dark 双值，保证浅色下对比度
 const protocolMeta = (protocol: Protocol) => {
-  const light = store.settings.theme === 'light'
+  // 明暗以 store.isDark 为单一数据源（已解析 'system' 跟随 OS），不能直接 theme==='light'
+  const light = !store.isDark
   return protocol === 'openai'
     ? { color: light ? '#2563eb' : '#60a5fa', bg: '#3b82f622' }
     : { color: light ? '#d97706' : '#f59e0b', bg: '#f59e0b22' }

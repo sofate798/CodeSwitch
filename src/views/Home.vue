@@ -45,7 +45,8 @@ const batchRunning = ref(false)
 const batchProgress = ref('')
 
 const statusMeta = (s: IDEState['status']) => {
-  const light = store.settings.theme === 'light'
+  // 明暗以 store.isDark 为单一数据源（已解析 'system' 跟随 OS），不能直接 theme==='light'（那样 system 恒判深色）
+  const light = !store.isDark
   switch (s) {
     case 'customized': return { label: t('home.status.customized'), color: light ? '#16a34a' : '#22c55e' }
     case 'default': return { label: t('home.status.default'), color: light ? '#6b7280' : '#9aa0ad' }
