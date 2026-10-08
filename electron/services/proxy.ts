@@ -181,7 +181,13 @@ export async function stopProxy(): Promise<OpResult<ProxyStatus>> {
 
 /** 应用配置：写入 store，并按 enabled 决定启停（端口变化会重启） */
 export async function configureProxy(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>> {
-  const next: ProxyConfig = { ...cfg(), ...patch }
+  // 渲染层入参不可信：非法值落盘后每次启动都会自启失败（字符串端口甚至会被 listen 当成命名管道），故按键白名单收口
+  const p = patch ?? {}
+  const clean: Partial<ProxyConfig> = {}
+  if (typeof p.enabled === 'boolean') clean.enabled = p.enabled
+  if (Number.isInteger(p.port) && p.port! >= 1024 && p.port! <= 65535) clean.port = p.port
+  if (p.providerId === null || typeof p.providerId === 'string') clean.providerId = p.providerId
+  const next: ProxyConfig = { ...cfg(), ...clean }
   store.set('proxy', next)
   if (next.enabled) return startProxy(next.port)
   await stopProxy()

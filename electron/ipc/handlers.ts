@@ -12,6 +12,7 @@ import { getDataDirInfo, migrateDataDir } from '../services/paths'
 import { applyTitleBarOverlay } from '../main/titleBar'
 import { encrypt, decrypt, keyTail, isCipher } from '../services/crypto'
 import { IDE_REGISTRY, resolvePath } from '../adapters/registry'
+import { isIdeRunning } from '../services/processGuard'
 import { randomUUID } from 'node:crypto'
 import type { Provider, AppSettings, Protocol, MsgCode, ProxyConfig, Snapshot, OpResult } from '../shared/types'
 
@@ -367,7 +368,7 @@ export function registerIpc(): void {
       log('warn', 'provider:import', (e as Error).message)
       return { ok: false, code: 'msg.provider.importFailed' } satisfies OpResult
     }
-    const incoming: any[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed.providers) ? parsed.providers : []
+    const incoming: any[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.providers) ? parsed.providers : []
     const valid = incoming.filter(
       (p) => p && typeof p.name === 'string' && (p.protocol === 'openai' || p.protocol === 'anthropic') && typeof p.baseUrl === 'string'
     )
@@ -377,15 +378,19 @@ export function registerIpc(): void {
     const now = Date.now()
     let added = 0
     for (const p of valid) {
-      if (existingNames.has(p.name)) continue
+      // 导入文件不可信：复用保存时的同一套校验（trim / 长度 / http(s) / 协议），名称与 URL 必填
+      const v = validateProviderInput({ name: p.name, protocol: p.protocol, baseUrl: p.baseUrl, model: String(p.model ?? ''), group: typeof p.group === 'string' ? p.group : '' })
+      if (!v.ok || !v.data.name || !v.data.baseUrl || existingNames.has(v.data.name)) continue
+      // 同一文件内的同名条目也只收第一条，否则会绕过重名约束
+      existingNames.add(v.data.name)
       list.push({
         id: randomUUID(),
-        name: p.name,
-        protocol: p.protocol as Protocol,
+        name: v.data.name,
+        protocol: v.data.protocol,
         apiKey: encrypt(String(p.apiKey ?? '')),
-        baseUrl: p.baseUrl,
-        model: String(p.model ?? ''),
-        group: typeof p.group === 'string' && p.group ? p.group : undefined,
+        baseUrl: v.data.baseUrl,
+        model: v.data.model,
+        group: v.data.group || undefined,
         createdAt: now,
         updatedAt: now
       })
@@ -540,7 +545,15 @@ export function registerIpc(): void {
 
   // ---- Backup ----
   safeHandleValue('backup:list', (_e, ideId?: string) => listBackups(ideId))
-  safeHandle('backup:restore', (_e, backupId: string) => restoreBackup(backupId))
+  safeHandle('backup:restore', async (_e, backupId: string) => {
+    // 与 apply/reset 同口径：整库/整文件回写前必须确认目标 IDE 已关闭，否则其退出时会用内存态覆盖恢复结果
+    const ideId = listBackups().find((b) => b.id === backupId)?.ideId
+    const ide = IDE_REGISTRY.find((d) => d.id === ideId)
+    if (ide && (await isIdeRunning(ide.processNames, true))) {
+      return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } } satisfies OpResult
+    }
+    return restoreBackup(backupId)
+  })
   safeHandle('backup:remove', (_e, backupId: string) => removeBackup(backupId))
 
   // ---- Log ----

@@ -155,7 +155,17 @@ function pushMemory(entry: LogEntry): void {
   if (memory.length > MAX_MEMORY) memory.shift()
 }
 
+function todayLogFile(): string {
+  return path.join(logDir, `app-${new Date().toISOString().slice(0, 10)}.log`)
+}
+
 export function log(level: LogEntry['level'], action: string, detail = ''): void {
+  // 托盘常驻进程可跨天运行，启动时选定的文件（跨天重启时还可能是旧日期文件）不能一直写下去：
+  // 换日即切到当天文件并补一次保留期清理/大小滚动
+  if (logDir && logFile !== todayLogFile()) {
+    logFile = todayLogFile()
+    rotateLogs()
+  }
   const entry: LogEntry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     ts: Date.now(),
@@ -199,8 +209,14 @@ export function getLogsForExport(): LogEntry[] {
     seen.add(key)
     all.push(e)
   }
-  // 1) 历史文件（跳过清空标记之前的文件）
-  for (const f of listLogFiles()) {
+  // 1) 历史文件（含大小滚动切分出的 .log.<n>；跳过清空标记之前的文件）
+  let files: string[] = []
+  try {
+    files = fs.readdirSync(logDir).filter((n) => /\.log(\.\d+)?$/.test(n)).map((n) => path.join(logDir, n))
+  } catch {
+    // 目录读取失败时仅导出内存
+  }
+  for (const f of files) {
     try {
       if (clearedAt > 0 && fs.statSync(f).mtimeMs <= clearedAt) continue
       const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean)
@@ -251,6 +267,6 @@ export function clearLogs(): OpResult {
   clearedAt = now
   writeClearMarker(now)
   // 重新指向当天文件（已被删除，下次 log 时自动创建）
-  logFile = path.join(logDir, `app-${new Date().toISOString().slice(0, 10)}.log`)
+  logFile = todayLogFile()
   return { ok: true, code: 'msg.log.clearOk', args: { count: removed } }
 }
