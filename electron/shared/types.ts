@@ -30,6 +30,9 @@ export type MsgCode =
   | 'msg.provider.saveOk'
   | 'msg.provider.removeOk'
   | 'msg.provider.missingFields'
+  | 'msg.provider.duplicateName'
+  | 'msg.provider.invalidBaseUrl'
+  | 'msg.provider.fieldTooLong'
   | 'msg.provider.testOk'
   | 'msg.provider.testTimeout'
   | 'msg.provider.testAuthFailed'
@@ -43,6 +46,7 @@ export type MsgCode =
   | 'msg.provider.notFound'
   // 快照 / 备份 / 日志
   | 'msg.snapshot.createOk'
+  | 'msg.snapshot.nameRequired'
   | 'msg.snapshot.notFound'
   | 'msg.snapshot.applyOk'
   | 'msg.snapshot.applyFailed'
@@ -53,6 +57,8 @@ export type MsgCode =
   | 'msg.backup.restoreOk'
   | 'msg.backup.restoreWarn'
   | 'msg.backup.restoreFailed'
+  | 'msg.backup.restoreNotFound'
+  | 'msg.backup.restoreNoTarget'
   | 'msg.backup.removeOk'
   | 'msg.backup.notFound'
   | 'msg.log.clearOk'
@@ -60,11 +66,13 @@ export type MsgCode =
   // 设置 / 代理 / 更新
   | 'msg.settings.saveOk'
   | 'msg.settings.dataDirChanged'
+  | 'msg.settings.dataDirSame'
   | 'msg.settings.resetDone'
   | 'msg.settings.relaunchNeeded'
   | 'msg.proxy.started'
   | 'msg.proxy.stopped'
   | 'msg.proxy.error'
+  | 'msg.proxy.errorPortInUse'
   | 'msg.update.available'
   | 'msg.update.notAvailable'
   | 'msg.update.downloaded'
@@ -277,6 +285,8 @@ export interface API {
     /** 删除供应商（并清理绑定/快照/网关引用）：成功 code=msg.provider.removeOk */
     remove(id: string): Promise<OpResult>
     test(id: string): Promise<OpResult<{ latencyMs?: number }>>
+    /** 查询供应商被哪些 IDE 引用（删除前警示）：data.ideIds/ideNames 为本机绑定该供应商的 IDE */
+    usage(id: string): Promise<OpResult<{ ideIds: string[]; ideNames: string[] }>>
     /** 导出全部供应商为 JSON 文件（含明文 Key，主进程弹保存对话框）；成功 code=msg.provider.exportOk，data=文件路径，args.count=数量 */
     export(): Promise<OpResult<string>>
     /** 从 JSON 文件导入供应商（主进程弹打开对话框）；成功 code=msg.provider.importOk（args.count），解析/校验失败 code=msg.provider.importFailed */
@@ -311,8 +321,8 @@ export interface API {
   proxy: {
     /** 获取网关状态（是否运行 / 端口 / URL / 目标供应商） */
     status(): Promise<ProxyStatus>
-    /** 修改配置并按 enabled 启停（端口变化会重启） */
-    configure(patch: Partial<ProxyConfig>): Promise<ProxyStatus>
+    /** 修改配置并按 enabled 启停（端口变化会重启）：透传 OpResult<ProxyStatus>，失败带消息码（如端口占用） */
+    configure(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>>
     /** 获取网关本地鉴权 token，供用户在客户端配置 Authorization: Bearer <token> */
     token(): Promise<string>
   }
@@ -321,13 +331,17 @@ export interface API {
     openDataDir(): Promise<void>
     /** 在系统文件管理器中定位并选中指定文件 */
     openPath(targetPath: string): Promise<void>
+    /** 当前应用版本号（app.getVersion，供关于区展示） */
+    getVersion(): Promise<string>
+    /** 更新状态：downloadedVersion 非空表示已有下载完成的更新待安装 */
+    getUpdateState(): Promise<{ downloadedVersion: string }>
     /** 检查更新（事件驱动）：返回 OpResult，version 经 args.version 承载（available/notAvailable/noFeed/error） */
     checkUpdate(): Promise<OpResult>
     /** 安装已下载的更新并重启（quitAndInstall），对应 system:install-update（主进程注册） */
     installUpdate(): Promise<OpResult>
     /** 获取数据目录：current=实际生效目录，custom=用户自定义目录（未设置为 null） */
     getDataDir(): Promise<{ current: string; custom: string | null }>
-    /** 选择并迁移到新的数据目录（弹目录选择框）；成功 code=msg.settings.dataDirChanged（data.needRestart=true 提示重启），失败 code=msg.common.error */
+    /** 选择并迁移到新的数据目录（弹目录选择框）；成功 code=msg.settings.dataDirChanged（data.needRestart=true 提示重启），选到当前目录 code=msg.settings.dataDirSame，其余失败 code=msg.common.error */
     setDataDir(): Promise<OpResult<{ needRestart?: boolean }>>
     /** 重置软件：清除 CodeSwitch 全部本地数据（供应商/快照/备份/日志/绑定/网关/设置） */
     resetAll(): Promise<OpResult>

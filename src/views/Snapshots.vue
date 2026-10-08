@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NTimeline, NTimelineItem, NButton, NSpace, NTag, NModal, NInput, NEmpty, NIcon,
+  NTimeline, NTimelineItem, NButton, NSpace, NTag, NModal, NInput, NEmpty, NIcon, NTooltip,
   useDialog
 } from 'naive-ui'
 import {
@@ -24,6 +24,22 @@ const name = ref('')
 const desc = ref('')
 const applyingId = ref<string | null>(null)
 const creating = ref(false)
+
+// B6：快照绑定明细（IDE → 供应商）有界展示，最多 6 条 + 溢出计数；供应商已删除时显占位
+const MAX_BINDING_DISPLAY = 6
+function bindingLines(s: Snapshot) {
+  const entries = Object.entries(s.ideBindings ?? {})
+  const lines = entries.slice(0, MAX_BINDING_DISPLAY).map(([ideId, binding]) => {
+    const ideName = store.ides.find((i) => i.id === ideId)?.name ?? ideId
+    const providerId = binding?.providerId ?? null
+    // 无 providerId → 快照记录的是默认态；有 id 但查不到 → 供应商已被删除
+    const label = !providerId
+      ? t('home.defaultProvider')
+      : store.providers.find((p) => p.id === providerId)?.name ?? t('snapshots.providerRemoved')
+    return `${ideName} → ${label}`
+  })
+  return { lines, extra: entries.length - lines.length }
+}
 
 async function create() {
   if (!name.value.trim()) {
@@ -82,8 +98,17 @@ function remove(s: Snapshot) {
   })
 }
 
-async function doExport(s: Snapshot) {
-  showResult(await window.api.snapshot.export(s.id))
+// B1：快照导出会内嵌引用供应商（含明文 Key），先二次确认再走 IPC
+function doExport(s: Snapshot) {
+  dialog.warning({
+    title: t('snapshots.exportWarnTitle'),
+    content: t('snapshots.exportWarn'),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      showResult(await window.api.snapshot.export(s.id))
+    }
+  })
 }
 
 async function doImport() {
@@ -128,16 +153,31 @@ function fmt(ts: number) {
         <div class="snap-body">
           <n-tag size="tiny" :bordered="false">{{ t('snapshots.ideCount', { count: Object.keys(s.ideBindings ?? {}).length }) }}</n-tag>
           <div v-if="s.description" class="snap-desc">{{ s.description }}</div>
+          <div v-if="bindingLines(s).lines.length" class="snap-detail">
+            <div class="snap-detail-title">{{ t('snapshots.detail') }}</div>
+            <div v-for="line in bindingLines(s).lines" :key="line" class="snap-detail-line">{{ line }}</div>
+            <div v-if="bindingLines(s).extra > 0" class="snap-detail-line more">… +{{ bindingLines(s).extra }}</div>
+          </div>
           <div class="snap-actions">
             <n-button size="tiny" type="primary" :loading="applyingId === s.id" @click="doApply(s)">
               <template #icon><n-icon :component="IconCheckmarkDone" :size="12" /></template>{{ t('common.apply') }}
             </n-button>
-            <n-button size="tiny" @click="doExport(s)" :title="t('snapshots.exportBtn')">
-              <template #icon><n-icon :component="IconExport" :size="12" /></template>
-            </n-button>
-            <n-button size="tiny" type="error" @click="remove(s)" :title="t('common.delete')">
-              <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
-            </n-button>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="tiny" :aria-label="t('snapshots.exportBtn')" @click="doExport(s)">
+                  <template #icon><n-icon :component="IconExport" :size="12" /></template>
+                </n-button>
+              </template>
+              {{ t('snapshots.exportBtn') }}
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button size="tiny" type="error" :aria-label="t('common.delete')" @click="remove(s)">
+                  <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
+                </n-button>
+              </template>
+              {{ t('common.delete') }}
+            </n-tooltip>
           </div>
         </div>
       </n-timeline-item>
@@ -145,7 +185,7 @@ function fmt(ts: number) {
 
     <n-modal v-model:show="modalShow" preset="card" style="width: 420px" :title="t('snapshots.createTitle')">
       <n-space vertical>
-        <n-input v-model:value="name" :placeholder="t('snapshots.namePlaceholder')" />
+        <n-input v-model:value="name" :placeholder="t('snapshots.namePlaceholder')" @keydown.enter.prevent="create" />
         <n-input v-model:value="desc" type="textarea" :placeholder="t('snapshots.descPlaceholder')" />
         <n-space justify="end">
           <n-button @click="modalShow = false">{{ t('common.cancel') }}</n-button>
@@ -157,9 +197,13 @@ function fmt(ts: number) {
 </template>
 
 <style scoped>
-.page-head { display: flex; justify-content: space-between; margin-bottom: 20px; }
+.page-head { display: flex; justify-content: space-between; margin-bottom: 16px; }
 .snap-timeline { padding-top: 6px; }
 .snap-body { display: flex; flex-direction: column; gap: 8px; }
 .snap-desc { font-size: 12px; color: var(--text-secondary); }
+.snap-detail { font-size: 12px; color: var(--text-secondary); border-left: 2px solid var(--border); padding-left: 8px; }
+.snap-detail-title { color: var(--text-secondary); margin-bottom: 2px; }
+.snap-detail-line { color: var(--text-primary); font-family: monospace; font-size: 11px; line-height: 1.6; }
+.snap-detail-line.more { color: var(--text-secondary); }
 .snap-actions { display: flex; gap: 6px; }
 </style>

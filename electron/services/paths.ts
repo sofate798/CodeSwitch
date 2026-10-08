@@ -1,6 +1,8 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import { log } from './logger'
+import type { OpResult } from '../shared/types'
 
 /**
  * 数据目录管理（FR-07-5）。
@@ -71,12 +73,14 @@ export function getDataDirInfo(): { current: string; custom: string | null } {
 /**
  * 迁移到新数据目录：把 config.json / backups / logs 复制到新目录并记录引导文件。
  * 不删除旧目录（保守，避免误删）；调用方应提示用户重启后生效。
+ * 统一 OpResult 契约：对外只回消息码，异常细节仅落日志（与 handler 层的消息码渲染解耦）。
  */
-export function migrateDataDir(newDir: string): { ok: boolean; message: string } {
+export function migrateDataDir(newDir: string): OpResult<{ newDir: string }> {
   const oldDir = app.getPath('userData')
-  if (!newDir) return { ok: false, message: '未选择目录' }
+  if (!newDir) return { ok: false, code: 'msg.common.error' }
   if (path.resolve(oldDir) === path.resolve(newDir)) {
-    return { ok: false, message: '与当前数据目录相同' }
+    // 选到当前目录：独立消息码，避免被降级为笼统的“操作失败”误导用户
+    return { ok: false, code: 'msg.settings.dataDirSame' }
   }
   try {
     fs.mkdirSync(newDir, { recursive: true })
@@ -86,9 +90,12 @@ export function migrateDataDir(newDir: string): { ok: boolean; message: string }
       if (fs.existsSync(src)) fs.cpSync(src, dst, { recursive: true, force: true })
     }
     writeBootstrap(newDir)
-    return { ok: true, message: newDir }
+    log('info', 'migrate-data-dir', `${oldDir} -> ${newDir}`)
+    return { ok: true, code: 'msg.settings.dataDirChanged', data: { newDir } }
   } catch (e) {
-    return { ok: false, message: (e as Error).message }
+    // 异常原文（可能含路径/系统英文描述）只进日志，不外透 UI
+    log('error', 'migrate-data-dir', `failed: ${(e as Error).message}`)
+    return { ok: false, code: 'msg.common.error' }
   }
 }
 

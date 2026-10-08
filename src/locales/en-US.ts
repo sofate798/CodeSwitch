@@ -76,6 +76,11 @@ export default {
     openFolder: 'Open Folder',
     empty: 'No installed IDEs detected',
     emptyHint: 'Click Refresh in the top-right corner to rescan',
+    running: 'Running',
+    batchApplying: 'Applying {i}/{n}: {name}',
+    batchResultTitle: 'Batch Apply Results',
+    batchResultSummary: '{ok} succeeded, {failed} failed',
+    batchResultSuggest: 'For failed items, close the corresponding IDE and retry. Successful changes are unaffected.',
     status: {
       customized: 'Customized',
       default: 'Default',
@@ -98,10 +103,13 @@ export default {
     group: 'Group (optional)',
     groupPlaceholder: 'e.g. Work / Personal',
     deleteConfirm: "Delete '{name}'? IDEs using this provider will need to reselect.",
+    deleteInUse: 'Currently used by {count} IDE(s) ({names}); deleting only clears binding marks and will not roll back configs already written into IDEs.',
     deleteTitle: 'Delete Provider',
     empty: 'No providers yet. Click the button above to add one.',
     importBtn: 'Import',
     exportBtn: 'Export',
+    exportWarnTitle: 'Export Providers',
+    exportWarn: 'The export file will contain plaintext API keys. Store it securely; never commit it to a repository or cloud drive. Export anyway?',
     validation: {
       name: 'Please enter a name',
       baseUrl: 'Please enter the Base URL',
@@ -124,7 +132,11 @@ export default {
     applyConfirmTitle: 'Apply Snapshot',
     applyConfirm: 'Apply snapshot "{name}" to all currently-bound IDEs ({count} in total): they will first be reset to official defaults, then the snapshot is applied. Bound IDEs not present in the snapshot will be reset to defaults (each is backed up first). Continue?',
     importBtn: 'Import',
-    exportBtn: 'Export'
+    exportBtn: 'Export',
+    exportWarnTitle: 'Export Snapshot',
+    exportWarn: 'The export file embeds the providers referenced by this snapshot (including plaintext API keys). Store it securely. Export anyway?',
+    detail: 'Binding details',
+    providerRemoved: '(removed)'
   },
   backups: {
     title: 'Backup Management',
@@ -148,7 +160,14 @@ export default {
     clearTitle: 'Clear Logs',
     empty: 'No logs yet',
     exportTxt: 'Export TXT',
-    exportJson: 'Export JSON'
+    exportJson: 'Export JSON',
+    searchPlaceholder: 'Search action or detail',
+    levelAll: 'All levels',
+    levelInfo: 'Info',
+    levelWarn: 'Warn',
+    levelError: 'Error',
+    count: '{total} entries · showing {shown}',
+    noMatch: 'No matching logs. Try adjusting the filters'
   },
   settings: {
     title: 'Settings',
@@ -166,6 +185,8 @@ export default {
     about: 'All data is stored locally. API keys are encrypted with AES-256-GCM and never uploaded.',
     checkUpdate: 'Check for Updates',
     update: 'Updates',
+    version: 'Version',
+    installUpdate: 'Install & Restart',
     dataDirChange: 'Change Folder',
     dataDirCustom: 'Using a custom data directory. A restart is required after changing it.',
     dataDirChangeTitle: 'Change Data Directory',
@@ -190,6 +211,12 @@ export default {
       url: 'Gateway URL',
       copy: 'Copy',
       copied: 'Gateway URL copied',
+      token: 'Access Token',
+      tokenShow: 'Show',
+      tokenHide: 'Hide',
+      tokenCopied: 'Token copied',
+      tokenFailed: 'Failed to read the token',
+      tokenHint: 'Requests to the gateway must carry Authorization: Bearer <token>; the x-codeswitch-token header and ?token= query parameter are also supported',
       hint: 'When enabled, exposes an OpenAI/Anthropic-compatible endpoint on 127.0.0.1 with cross-protocol translation and streaming.\n• Any client that allows a custom Base URL (Cline / Continue / Roo, Codex, Gemini CLI, scripts) can use the URL above to reuse the current provider.\n• Cursor Free blocks custom endpoints for its built-in AI on the server side; install a free OpenAI-compatible extension (e.g. Cline / Continue) inside Cursor and point its Base URL to this gateway to use custom providers without a subscription.'
     }
   },
@@ -223,6 +250,9 @@ export default {
       saveOk: 'Provider saved',
       removeOk: 'Provider deleted',
       missingFields: 'Please fill in the required fields',
+      duplicateName: 'A provider named "{name}" already exists. Choose another name',
+      invalidBaseUrl: 'Invalid Base URL (must start with http(s)://)',
+      fieldTooLong: 'Field content is too long',
       testOk: 'Connection OK ({latencyMs}ms)',
       testTimeout: 'Connection timed out',
       testAuthFailed: 'Authentication failed. Check the API Key',
@@ -237,6 +267,7 @@ export default {
     },
     snapshot: {
       createOk: 'Snapshot created',
+      nameRequired: 'Please enter a snapshot name (max 60 characters)',
       notFound: 'Snapshot not found',
       applyOk: "Applied snapshot '{name}'; {applied} IDEs updated",
       applyFailed: 'Snapshot apply partially failed: {count} IDEs did not succeed',
@@ -247,8 +278,10 @@ export default {
     },
     backup: {
       restoreOk: 'Backup restored to: {target}',
-      restoreWarn: 'Restored, but a residual -wal was detected. Restart the related IDE to avoid stale data being written back: {warning}',
-      restoreFailed: 'Restore failed',
+      restoreWarn: 'Restored, but a residual -wal was detected. Start and quit the related IDE normally to trigger a checkpoint, otherwise stale data may overwrite the restore',
+      restoreFailed: 'Restore failed. See operation logs for details',
+      restoreNotFound: 'Backup not found or backup file missing',
+      restoreNoTarget: 'Cannot determine the restore target. Set the config path manually under IDE Management first',
       removeOk: 'Backup deleted',
       notFound: 'Backup not found'
     },
@@ -259,13 +292,15 @@ export default {
     settings: {
       saveOk: 'Settings saved',
       dataDirChanged: 'Data directory changed',
+      dataDirSame: 'The selected directory is the same as the current data directory; nothing changed',
       resetDone: 'All data has been reset',
       relaunchNeeded: 'Restart required to take effect'
     },
     proxy: {
       started: 'Gateway started (port {port})',
       stopped: 'Gateway stopped',
-      error: 'Failed to start gateway'
+      error: 'Failed to start gateway',
+      errorPortInUse: 'Port {port} is already in use. Try another port'
     },
     update: {
       available: 'Update available: {version}',

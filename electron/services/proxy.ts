@@ -92,8 +92,8 @@ export function proxyStatus(): ProxyStatus {
 }
 
 /** 当前生效的转发目标（解密后的三要素）。
- * 密钥不可用（KeyUnavailableError）或解密失败时返回 null，并在 lastActiveError 记录非敏感原因，
- * 绝不向上抛出异常、绝不回显明文 Key（Alex 对接要求）。 */
+ * 密钥不可用（KeyUnavailableError）或解密失败时返回 null，并在 lastActiveError 记录非敏感原因（英文，
+ * 供状态诊断与日志使用；界面文案由前端 i18n 渲染），绝不向上抛出异常、绝不回显明文 Key（Alex 对接要求）。 */
 function activeProvider(): { provider: Provider; apiKey: string; baseUrl: string; model: string } | null {
   const c = cfg()
   if (!c.providerId) {
@@ -113,8 +113,8 @@ function activeProvider(): { provider: Provider; apiKey: string; baseUrl: string
   } catch (e) {
     const keyUnavailable = e instanceof KeyUnavailableError || (e as Error)?.name === 'KeyUnavailableError'
     lastActiveError = keyUnavailable
-      ? '目标供应商密钥不可用，请在 CodeSwitch 中重新输入该供应商的 API Key'
-      : '目标供应商配置解析失败，请检查其配置'
+      ? 'Target provider key is unavailable; re-enter its API Key in CodeSwitch'
+      : 'Target provider config failed to parse; please check its settings'
     // 仅记录 provider id 与非敏感原因，绝不记录明文 Key
     log('error', 'proxy', `activeProvider failed for ${provider.id}: ${keyUnavailable ? 'key unavailable' : 'decrypt/parse error'}`)
     return null
@@ -133,10 +133,17 @@ export async function startProxy(portOverride?: number): Promise<OpResult<ProxyS
       handle(req, res).catch((e) => sendError(res, 500, (e as Error).message, 'openai'))
     })
     srv.on('error', (e: NodeJS.ErrnoException) => {
-      lastError = e.code === 'EADDRINUSE' ? `端口 ${port} 已被占用` : e.message
+      // lastError 为技术诊断串（英文，进 ProxyStatus.error/日志）；用户可见文案走消息码由前端 i18n 渲染
+      const portInUse = e.code === 'EADDRINUSE'
+      lastError = portInUse ? `Port ${port} is already in use` : e.message
       server = null
       log('error', 'proxy', `start failed: ${lastError}`)
-      resolve({ ok: false, code: 'msg.proxy.error', args: { reason: lastError }, data: proxyStatus() })
+      resolve({
+        ok: false,
+        code: portInUse ? 'msg.proxy.errorPortInUse' : 'msg.proxy.error',
+        args: portInUse ? { port } : {},
+        data: proxyStatus()
+      })
     })
     srv.listen(port, '127.0.0.1', () => {
       server = srv
@@ -214,11 +221,35 @@ function isAuthed(req: http.IncomingMessage, url: URL | null): boolean {
 
 // ---------------- 请求处理 ----------------
 
+/** 请求体体积上限（A5）：超限直接拒绝，避免本机进程被超大 body 耗尽内存 */
+const MAX_BODY_BYTES = 32 * 1024 * 1024
+
+/** 超限错误：handle 层据此回 413（而非冒泡为 500） */
+class MaxBodySizeError extends Error {
+  constructor() {
+    super('request body too large')
+    this.name = 'MaxBodySizeError'
+  }
+}
+
 function readBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = ''
-    req.on('data', (c) => (data += c))
+    let size = 0
+    let tooLarge = false
+    req.on('data', (c: Buffer) => {
+      if (tooLarge) return // 超限后不再缓冲，仅丢弃后续 chunk（内存已封顶）
+      size += c.length
+      if (size > MAX_BODY_BYTES) {
+        // 不销毁 socket：立即 reject 让 handler 回 413，响应先于连接关闭送达调用方
+        tooLarge = true
+        reject(new MaxBodySizeError())
+        return
+      }
+      data += c
+    })
     req.on('end', () => {
+      if (tooLarge) return
       if (!data) return resolve({})
       try {
         resolve(JSON.parse(data))
@@ -228,6 +259,12 @@ function readBody(req: http.IncomingMessage): Promise<any> {
     })
     req.on('error', reject)
   })
+}
+
+/** 入站 body 读取失败归类：超限 413，其余（JSON 解析失败等）400 */
+function rejectBody(res: http.ServerResponse, e: unknown, format: 'openai' | 'anthropic'): void {
+  if (e instanceof MaxBodySizeError) return sendError(res, 413, 'request body too large', format)
+  return sendError(res, 400, 'invalid JSON body', format)
 }
 
 /**
@@ -327,7 +364,12 @@ async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>,
 }
 
 async function handleChatCompletions(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
-  const body = await readBody(req)
+  let body: any
+  try {
+    body = await readBody(req)
+  } catch (e) {
+    return rejectBody(res, e, 'openai')
+  }
   if (!body.model) body.model = act.model
   const stream = !!body.stream
   try {
@@ -357,7 +399,12 @@ async function handleChatCompletions(act: NonNullable<ReturnType<typeof activePr
 }
 
 async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
-  const body = await readBody(req)
+  let body: any
+  try {
+    body = await readBody(req)
+  } catch (e) {
+    return rejectBody(res, e, 'anthropic')
+  }
   if (!body.model) body.model = act.model
   const stream = !!body.stream
   try {

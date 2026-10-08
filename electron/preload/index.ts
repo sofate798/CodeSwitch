@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
     save: (p: any) => ipcInvoke('provider:save', p),
     remove: (id: string) => ipcInvoke('provider:remove', id),
     test: (id: string) => ipcInvoke('provider:test', id),
+    usage: (id: string) => ipcInvoke('provider:usage', id),
     export: () => ipcInvoke('provider:export'),
     import: () => ipcInvoke('provider:import')
   },
@@ -52,6 +53,8 @@ contextBridge.exposeInMainWorld('api', {
     pickFile: (defaultPath?: string) => ipcInvoke('system:pick-file', defaultPath),
     openDataDir: () => ipcInvoke('system:open-data-dir'),
     openPath: (targetPath: string) => ipcInvoke('system:open-path', targetPath),
+    getVersion: () => ipcInvoke('system:get-version'),
+    getUpdateState: () => ipcInvoke('system:get-update-state'),
     checkUpdate: () => ipcInvoke('system:check-update'),
     installUpdate: () => ipcInvoke('system:install-update'),
     getDataDir: () => ipcInvoke('system:get-data-dir'),

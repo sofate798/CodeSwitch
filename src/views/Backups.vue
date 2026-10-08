@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NCard, NButton, NSpace, NTag, NSelect, NEmpty, useDialog
+  NCard, NButton, NSpace, NTag, NSelect, NEmpty, NTooltip, NSpin, useDialog
 } from 'naive-ui'
 import {
   RefreshOutline as IconRefresh, TrashOutline as IconTrashOutline,
@@ -18,13 +18,20 @@ const dialog = useDialog()
 const { message, showResult } = useResult()
 
 const backups = ref<BackupEntry[]>([])
-const ideFilter = ref<string | null>(null)
+// C4：筛选值统一为 string（'' = 全部），不再 null/'' 混用；load 时归一为 undefined
+const ideFilter = ref('')
 const restoring = ref<string | null>(null)
+const listLoading = ref(false)
 
 const ideOptions = ref<{ label: string; value: string }[]>([])
 
 async function load() {
-  backups.value = await window.api.backup.list(ideFilter.value || undefined)
+  listLoading.value = true
+  try {
+    backups.value = await window.api.backup.list(ideFilter.value || undefined)
+  } finally {
+    listLoading.value = false
+  }
 }
 
 onMounted(async () => {
@@ -37,7 +44,6 @@ onMounted(async () => {
     { label: t('backups.allIdes'), value: '' },
     ...Array.from(names.entries()).map(([id, name]) => ({ label: name, value: id }))
   ]
-  ideFilter.value = ''
   await load()
 })
 
@@ -71,8 +77,8 @@ function restore(b: BackupEntry) {
       try {
         const r = await window.api.backup.restore(b.id)
         showResult(r)
-        // 恢复成功但检测到残留 -wal（Sam-M4 数据安全告警）：单独弱提醒，不阻断
-        if (r.ok && r.args?.warning) message.warning(t('msg.backup.restoreWarn', { warning: String(r.args.warning) }))
+        // 恢复成功但检测到残留 -wal（Sam-M4 数据安全告警）：单独弱提醒，不阻断；文案已去插值
+        if (r.ok && r.args?.warning === 'wal') message.warning(t('msg.backup.restoreWarn'))
         await store.refreshAll()
         await load()
       } finally {
@@ -110,16 +116,17 @@ function remove(b: BackupEntry) {
           style="width: 200px"
           @update:value="load"
         />
-        <n-button size="small" @click="load">
+        <n-button size="small" :loading="listLoading" @click="load">
           <template #icon><n-icon :component="IconRefresh" :size="14" /></template>
           {{ t('common.refresh') }}
         </n-button>
       </n-space>
     </div>
 
-    <n-empty v-if="backups.length === 0" :description="t('backups.empty')" />
+    <n-empty v-if="backups.length === 0 && !listLoading" :description="t('backups.empty')" />
 
-    <div class="bak-list">
+    <n-spin v-else :show="listLoading" size="small">
+      <div class="bak-list">
       <n-card v-for="b in backups" :key="b.id" size="small" :bordered="false" class="bak-card">
         <div class="bak-main">
           <n-icon :component="IconArchiveOutline" :size="18" />
@@ -137,15 +144,21 @@ function remove(b: BackupEntry) {
           </div>
         </div>
         <div class="bak-actions">
-          <n-button size="tiny" type="primary" :loading="restoring === b.id" @click="restore(b)">
+          <n-button size="tiny" type="primary" :loading="restoring === b.id" :disabled="listLoading" @click="restore(b)">
             {{ t('backups.restore') }}
           </n-button>
-          <n-button size="tiny" type="error" @click="remove(b)">
-            <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
-          </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button size="tiny" type="error" :aria-label="t('common.delete')" @click="remove(b)">
+                <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
+              </n-button>
+            </template>
+            {{ t('common.delete') }}
+          </n-tooltip>
         </div>
       </n-card>
-    </div>
+      </div>
+    </n-spin>
   </div>
 </template>
 

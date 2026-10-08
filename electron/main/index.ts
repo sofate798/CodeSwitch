@@ -171,6 +171,12 @@ async function getAutoUpdater(): Promise<any> {
 }
 
 function setupAutoUpdater(): void {
+  // 当前应用版本（供关于区展示，拔除前端硬编码）
+  ipcMain.handle('system:get-version', () => app.getVersion())
+
+  // 更新状态：downloadedVersion 非空表示已有下载完成的更新，前端据此展示“立即安装”
+  ipcMain.handle('system:get-update-state', () => ({ downloadedVersion }))
+
   ipcMain.handle('system:check-update', async (): Promise<OpResult> => {
     // 开发模式无 feed URL，优雅降级
     if (!app.isPackaged) return { ok: false, code: 'msg.update.noFeed' }

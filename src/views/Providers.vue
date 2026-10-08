@@ -42,6 +42,14 @@ const form = ref({
   group: ''
 })
 
+// C1：协议徽标颜色随主题取 light/dark 双值，保证浅色下对比度
+const protocolMeta = (protocol: Protocol) => {
+  const light = store.settings.theme === 'light'
+  return protocol === 'openai'
+    ? { color: light ? '#2563eb' : '#60a5fa', bg: '#3b82f622' }
+    : { color: light ? '#d97706' : '#f59e0b', bg: '#f59e0b22' }
+}
+
 function isHttpUrl(raw: string): boolean {
   try {
     const u = new URL((raw || '').trim())
@@ -52,8 +60,16 @@ function isHttpUrl(raw: string): boolean {
 }
 
 // Jack-High4：NForm 行内校验，复用 providers.validation.*；编辑态允许 Key 留空（不改原值）
+// 重名前置校验（排除自身）：与主进程 provider:save 的重名拦截双保险，提前给出行内反馈
 const rules = computed<FormRules>(() => ({
-  name: { required: true, message: t('providers.validation.name'), trigger: ['input', 'blur'] },
+  name: [
+    { required: true, message: t('providers.validation.name'), trigger: ['input', 'blur'] },
+    {
+      validator: (_r, v: string) => !store.providers.some((p) => p.name === (v || '').trim() && p.id !== editing.value?.id),
+      message: () => t('msg.provider.duplicateName', { name: form.value.name.trim() }),
+      trigger: ['input', 'blur']
+    }
+  ],
   baseUrl: [
     { required: true, message: t('providers.validation.baseUrl'), trigger: ['input', 'blur'] },
     {
@@ -106,14 +122,26 @@ async function save() {
 }
 
 function remove(p: Provider) {
-  dialog.warning({
-    title: t('providers.deleteTitle'),
-    content: t('providers.deleteConfirm', { name: p.name }),
-    positiveText: t('common.delete'), negativeText: t('common.cancel'),
-    onPositiveClick: async () => {
-      if (showResult(await window.api.provider.remove(p.id))) await store.refreshAll()
-    }
-  })
+  // B6：先查引用（失败降级为普通确认），被 IDE 绑定时追加警示文案
+  void (async () => {
+    let content = t('providers.deleteConfirm', { name: p.name })
+    try {
+      const u = await window.api.provider.usage(p.id)
+      if (u.ok && u.data && u.data.ideIds.length > 0) {
+        // 分隔符随当前语言：中文用顿号，英文用逗号，避免英文界面出现「、」
+        const sep = store.settings.locale === 'zh-CN' ? '、' : ', '
+        content += ' ' + t('providers.deleteInUse', { count: u.data.ideIds.length, names: u.data.ideNames.join(sep) })
+      }
+    } catch { /* usage 查询失败不阻断删除确认 */ }
+    dialog.warning({
+      title: t('providers.deleteTitle'),
+      content,
+      positiveText: t('common.delete'), negativeText: t('common.cancel'),
+      onPositiveClick: async () => {
+        if (showResult(await window.api.provider.remove(p.id))) await store.refreshAll()
+      }
+    })
+  })()
 }
 
 async function test(p: Provider) {
@@ -133,8 +161,17 @@ function keyDisplay(p: Provider): string {
   return p.keyTail ? `sk-****${p.keyTail}` : 'sk-****'
 }
 
-async function doExport() {
-  showResult(await window.api.provider.export())
+// B1：导出文件含明文 API Key，先二次确认再走 IPC
+function doExport() {
+  dialog.warning({
+    title: t('providers.exportWarnTitle'),
+    content: t('providers.exportWarn'),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      showResult(await window.api.provider.export())
+    }
+  })
 }
 
 async function doImport() {
@@ -168,7 +205,14 @@ watch(() => store.providers, () => { testResult.value = {} })
       </n-space>
     </div>
 
-    <n-empty v-if="store.providers.length === 0" :description="t('providers.empty')" />
+    <n-empty v-if="store.providers.length === 0" :description="t('providers.empty')">
+      <template #extra>
+        <n-button type="primary" size="small" @click="openCreate">
+          <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
+          {{ t('providers.createTitle') }}
+        </n-button>
+      </template>
+    </n-empty>
 
     <div class="provider-grid">
       <n-card v-for="p in store.providers" :key="p.id" size="small" :bordered="false" class="p-card" hoverable>
@@ -177,7 +221,7 @@ watch(() => store.providers, () => { testResult.value = {} })
             <n-icon :component="p.protocol === 'openai' ? IconLogoOpenAI : IconLogoAnthropic" :size="16" />
             <span>{{ p.name }}</span>
           </div>
-          <n-tag size="tiny" :bordered="false" :color="{ color: p.protocol === 'openai' ? '#3b82f622' : '#f59e0b22', textColor: p.protocol === 'openai' ? '#60a5fa' : '#f59e0b', borderColor: 'transparent' }">
+          <n-tag size="tiny" :bordered="false" :color="{ color: protocolMeta(p.protocol).bg, textColor: protocolMeta(p.protocol).color, borderColor: 'transparent' }">
             {{ p.protocol === 'openai' ? 'OpenAI' : 'Anthropic' }}
           </n-tag>
         </div>
@@ -206,7 +250,7 @@ watch(() => store.providers, () => { testResult.value = {} })
 
     <!-- 编辑弹窗 -->
     <n-modal v-model:show="modalShow" preset="card" style="width: 520px" :title="editing ? t('providers.editTitle') : t('providers.createTitle')">
-      <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" size="medium">
+      <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" size="medium" @keydown.enter.prevent="save">
         <n-form-item :label="t('providers.name')" path="name">
           <n-input v-model:value="form.name" :placeholder="t('providers.namePlaceholder')" />
         </n-form-item>
@@ -240,7 +284,7 @@ watch(() => store.providers, () => { testResult.value = {} })
 </template>
 
 <style scoped>
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .p-card { background: var(--bg-card); border: 1px solid var(--border); }
 .p-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }

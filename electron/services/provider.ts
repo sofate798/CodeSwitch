@@ -45,8 +45,8 @@ export function normalizeWriteBaseUrl(url: string, protocol: Protocol, ideId?: s
   return u
 }
 
-/** 是否为合法 http(s) URL（用于 testBadUrl 判定） */
-function isHttpUrl(raw: string): boolean {
+/** 是否为合法 http(s) URL（连接测试与保存校验共用） */
+export function isHttpUrl(raw: string): boolean {
   try {
     const u = new URL((raw || '').trim())
     return u.protocol === 'http:' || u.protocol === 'https:'

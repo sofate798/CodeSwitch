@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { store, mutate } from '../services/store'
 import { scanIDEs, applyProvider, resetIDE, manualAdd, generateConfig, checkIdeRunning } from '../services/ideScanner'
-import { testProvider } from '../services/provider'
+import { testProvider, isHttpUrl } from '../services/provider'
 import { listSnapshots, createSnapshot, applySnapshot, removeSnapshot, insertSnapshot } from '../services/snapshot'
 import { listBackups, restoreBackup, removeBackup } from '../services/backup'
 import { getLogs, getLogsForExport, clearLogs, log } from '../services/logger'
@@ -11,8 +11,9 @@ import { proxyStatus, configureProxy, stopProxy, getProxyToken } from '../servic
 import { getDataDirInfo, migrateDataDir } from '../services/paths'
 import { applyTitleBarOverlay } from '../main/titleBar'
 import { encrypt, decrypt, keyTail, isCipher } from '../services/crypto'
+import { IDE_REGISTRY, resolvePath } from '../adapters/registry'
 import { randomUUID } from 'node:crypto'
-import type { Provider, AppSettings, Protocol, ProxyConfig, Snapshot, OpResult } from '../shared/types'
+import type { Provider, AppSettings, Protocol, MsgCode, ProxyConfig, Snapshot, OpResult } from '../shared/types'
 
 /**
  * 包装 ipcMain.handle：统一捕获底层未预期异常，规整为 { ok:false, code:'msg.common.error' } 并落错误日志，
@@ -70,6 +71,103 @@ function dlgDict(): DialogDict {
   const loc = (store.get('settings') as { locale?: string })?.locale
   return loc === 'en-US' ? DIALOG_I18N.en : DIALOG_I18N.zh
 }
+// ---------------- 入参校验（A1：主进程收口，不信任渲染层） ----------------
+
+/** 供应商字段长度上限（超限拒绝落盘，避免脏数据撑坏列表/配置） */
+const PROVIDER_LIMITS = { name: 80, baseUrl: 500, model: 200, group: 100 } as const
+/** 快照名称/备注长度上限 */
+const SNAPSHOT_LIMITS = { name: 60, description: 200 } as const
+const PROTOCOLS: Protocol[] = ['openai', 'anthropic']
+/** 前端掩码占位：提交值等于此串时视为未修改 Key，跳过重新加密 */
+const KEY_MASK_PLACEHOLDER = '****'
+
+const trimmed = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+
+interface FailResult {
+  ok: false
+  code: MsgCode
+  args?: Record<string, string | number>
+}
+
+function fail(code: MsgCode, args?: Record<string, string | number>): FailResult {
+  return { ok: false, code, args }
+}
+
+/** 校验后的供应商安全入参（均已 trim） */
+interface CleanProviderInput {
+  name: string
+  protocol: Protocol
+  baseUrl: string
+  model: string
+  group: string
+  apiKey: string
+}
+
+type ProviderValidation = { ok: true; data: CleanProviderInput } | FailResult
+
+/**
+ * 校验供应商写入入参：trim + 长度上限 + protocol 白名单 + baseUrl 必须 http(s) + 重名拦截。
+ * 返回校验后的安全入参；失败返回结构化错误（消息码由前端 i18n 渲染）。
+ * editingId 用于编辑态排除自身做重名检查。
+ */
+function validateProviderInput(input: Partial<Provider> & { protocol: Protocol }, editingId?: string): ProviderValidation {
+  const name = trimmed(input.name)
+  const baseUrl = trimmed(input.baseUrl)
+  const model = trimmed(input.model)
+  const group = trimmed(input.group)
+  if (!PROTOCOLS.includes(input.protocol)) return fail('msg.provider.missingFields')
+  if (name.length > PROVIDER_LIMITS.name || baseUrl.length > PROVIDER_LIMITS.baseUrl || model.length > PROVIDER_LIMITS.model || group.length > PROVIDER_LIMITS.group) {
+    return fail('msg.provider.fieldTooLong')
+  }
+  if (baseUrl && !isHttpUrl(baseUrl)) return fail('msg.provider.invalidBaseUrl')
+  if (name) {
+    const list = store.get('providers') as Provider[]
+    const dup = list.some((p) => p.name === name && p.id !== editingId)
+    if (dup) return fail('msg.provider.duplicateName', { name })
+  }
+  return { ok: true, data: { name, protocol: input.protocol, baseUrl, model, group, apiKey: input.apiKey ?? '' } }
+}
+
+// ---------------- system:open-path 路径白名单（A2） ----------------
+
+/** 规范化路径用于比较：去尾分隔符、统一分隔符；Windows 下大小写不敏感 */
+function normPath(p: string): string {
+  const n = path.normalize(p).replace(/[\\/]+$/, '')
+  return process.platform === 'win32' ? n.toLowerCase() : n
+}
+
+function isSameOrInside(target: string, root: string): boolean {
+  const t = normPath(target)
+  const r = normPath(root)
+  return t === r || t.startsWith(r + path.sep.toLowerCase())
+}
+
+/** 收集允许在文件管理器中打开的路径集：userData + 注册表全部候选路径/其父目录 + 手动指定路径 */
+function openPathRoots(): string[] {
+  const roots: string[] = [app.getPath('userData')]
+  const pushRaw = (tpl?: string | null): void => {
+    const p = tpl ? resolvePath(tpl) : null
+    if (p) {
+      roots.push(p)
+      roots.push(path.dirname(p))
+    }
+  }
+  for (const ide of IDE_REGISTRY) {
+    ide.configPaths.forEach(pushRaw)
+    ide.detectPaths.forEach(pushRaw)
+    ;(ide.homeMarkers ?? []).forEach(pushRaw)
+    const s = ide.storage
+    if (s.kind === 'sqlite') s.dbPaths.forEach(pushRaw)
+    else s.paths.forEach(pushRaw)
+    if (s.kind === 'toml' && s.secretFile) pushRaw(s.secretFile.path)
+  }
+  for (const b of Object.values(store.get('ideBindings'))) if (b?.configPath) pushRaw(b.configPath)
+  return roots
+}
+
+function openPathAllowed(targetPath: string): boolean {
+  return openPathRoots().some((root) => isSameOrInside(targetPath, root))
+}
 
 export function registerIpc(): void {
   // ---- IDE ----
@@ -103,26 +201,29 @@ export function registerIpc(): void {
     // keyTail 内部已容错（失败返回 ''），不会抛异常；仅输出明文后 4 位供前端脱敏展示
     return list.map((p) => ({ ...p, keyTail: keyTail(p.apiKey) }))
   })
-  safeHandle('provider:save', (_e, input: Partial<Provider> & { protocol: 'openai' | 'anthropic' }) => {
+  safeHandle('provider:save', (_e, input: Partial<Provider> & { protocol: Protocol }) => {
     const list: Provider[] = store.get('providers')
     const now = Date.now()
     const idx = input.id ? list.findIndex((p) => p.id === input.id) : -1
+    const v = validateProviderInput(input, idx >= 0 ? input.id : undefined)
+    if (!v.ok) return v satisfies OpResult
+    const clean = v.data
 
     if (idx >= 0) {
       const existing = list[idx]
-      // apiKey 仅在用户提供新值时加密；否则保留旧密文
+      // apiKey 仅在用户提供新值时加密；否则保留旧密文；掩码占位/密文形状跳过重新加密
       let apiKeyCipher = existing.apiKey
-      if (input.apiKey && !isCipher(input.apiKey) && input.apiKey !== '****') {
-        apiKeyCipher = encrypt(input.apiKey)
+      if (clean.apiKey && !isCipher(clean.apiKey) && clean.apiKey !== KEY_MASK_PLACEHOLDER) {
+        apiKeyCipher = encrypt(clean.apiKey)
       }
       // 就地替换列表元素，确保修改真正落盘
       list[idx] = {
         ...existing,
-        name: input.name ?? existing.name,
-        protocol: input.protocol,
-        baseUrl: input.baseUrl ?? existing.baseUrl,
-        model: input.model ?? existing.model,
-        group: input.group ?? existing.group,
+        name: clean.name || existing.name,
+        protocol: clean.protocol,
+        baseUrl: clean.baseUrl || existing.baseUrl,
+        model: clean.model || existing.model,
+        group: clean.group || existing.group,
         apiKey: apiKeyCipher,
         updatedAt: now
       }
@@ -130,17 +231,17 @@ export function registerIpc(): void {
       return { ok: true, code: 'msg.provider.saveOk', data: list[idx] } satisfies OpResult<Provider>
     }
 
-    if (!input.name || !input.baseUrl || !input.model || !input.apiKey) {
-      return { ok: false, code: 'msg.provider.missingFields' } satisfies OpResult
+    if (!clean.name || !clean.baseUrl || !clean.model || !clean.apiKey) {
+      return fail('msg.provider.missingFields') satisfies OpResult
     }
     const np: Provider = {
       id: randomUUID(),
-      name: input.name,
-      protocol: input.protocol,
-      apiKey: encrypt(input.apiKey),
-      baseUrl: input.baseUrl,
-      model: input.model,
-      group: input.group,
+      name: clean.name,
+      protocol: clean.protocol,
+      apiKey: encrypt(clean.apiKey),
+      baseUrl: clean.baseUrl,
+      model: clean.model,
+      group: clean.group || undefined,
       createdAt: now,
       updatedAt: now
     }
@@ -172,6 +273,16 @@ export function registerIpc(): void {
     const p = (store.get('providers') as Provider[]).find((x: Provider) => x.id === id)
     if (!p) return { ok: false, code: 'msg.common.error' } satisfies OpResult
     return testProvider(p)
+  })
+
+  // 供应商引用查询（A6）：删除前由前端展示“正被哪些 IDE 使用”，仅读不写
+  safeHandle('provider:usage', (_e, id: string) => {
+    const bindings = store.get('ideBindings')
+    const ideIds = Object.entries(bindings)
+      .filter(([, v]) => v.providerId === id)
+      .map(([k]) => k)
+    const ideNames = ideIds.map((x) => IDE_REGISTRY.find((d) => d.id === x)?.name ?? x)
+    return { ok: true, data: { ideIds, ideNames } } satisfies OpResult<{ ideIds: string[]; ideNames: string[] }>
   })
 
   // 供应商导出：主进程弹保存对话框，写出 JSON（含明文 Key，便于迁移）
@@ -257,7 +368,14 @@ export function registerIpc(): void {
 
   // ---- Snapshot ----
   safeHandle('snapshot:list', () => listSnapshots())
-  safeHandle('snapshot:create', (_e, name: string, desc: string) => createSnapshot(name, desc))
+  safeHandle('snapshot:create', (_e, name: string, desc: string) => {
+    // 主进程收口：名称 trim 后必填且不超长，备注限长（前端同步校验，此处兜底）
+    const n = trimmed(name)
+    if (!n || n.length > SNAPSHOT_LIMITS.name) return fail('msg.snapshot.nameRequired') satisfies OpResult
+    const d = trimmed(desc)
+    if (d.length > SNAPSHOT_LIMITS.description) return fail('msg.provider.fieldTooLong', { max: SNAPSHOT_LIMITS.description }) satisfies OpResult
+    return createSnapshot(n, d)
+  })
   safeHandle('snapshot:apply', (_e, id: string) => applySnapshot(id))
   safeHandle('snapshot:remove', (_e, id: string) => removeSnapshot(id))
 
@@ -429,14 +547,27 @@ export function registerIpc(): void {
   // ---- Settings ----
   safeHandle('settings:get', () => store.get('settings'))
   safeHandle('settings:set', (_e, patch: Partial<AppSettings>) => {
-    const next = { ...store.get('settings'), ...patch }
+    // 白名单校验：非法枚举/类型的键忽略并落警告，杜绝脏入参落盘后破坏界面/启动项
+    const rules: Record<keyof AppSettings, (v: unknown) => boolean> = {
+      theme: (v) => v === 'system' || v === 'dark' || v === 'light',
+      locale: (v) => v === 'zh-CN' || v === 'en-US',
+      autoLaunch: (v) => typeof v === 'boolean',
+      dataDir: (v) => typeof v === 'string'
+    }
+    const clean: Partial<AppSettings> = {}
+    for (const [k, v] of Object.entries(patch ?? {})) {
+      const rule = rules[k as keyof AppSettings]
+      if (rule && rule(v)) (clean as Record<string, unknown>)[k] = v
+      else log('warn', 'settings:set', `ignored invalid setting key: ${String(k)}`)
+    }
+    const next = { ...store.get('settings'), ...clean }
     store.set('settings', next)
     // 仅当本次修改包含 autoLaunch 时才更新开机自启，避免主题/语言切换触发副作用
-    if ('autoLaunch' in patch) {
+    if ('autoLaunch' in clean) {
       app.setLoginItemSettings({ openAtLogin: next.autoLaunch })
     }
     // 主题变化时同步 Windows 原生标题栏按钮配色（取值与平台守卫集中在 applyTitleBarOverlay）
-    if ('theme' in patch) {
+    if ('theme' in clean) {
       applyTitleBarOverlay(BrowserWindow.getAllWindows()[0] ?? null, next.theme)
     }
     return next
@@ -444,10 +575,8 @@ export function registerIpc(): void {
 
   // ---- Proxy (本地转发网关) ----
   safeHandle('proxy:status', () => proxyStatus())
-  safeHandle('proxy:configure', async (_e, patch: Partial<ProxyConfig>) => {
-    const r = await configureProxy(patch)
-    return r.data ?? proxyStatus()
-  })
+  // 透传完整 OpResult<ProxyStatus>（A4）：失败带消息码（如端口占用），data 仍携最新状态
+  safeHandle('proxy:configure', async (_e, patch: Partial<ProxyConfig>) => configureProxy(patch))
   // 网关本地鉴权 token：供前端在设置页展示，用户据此配置客户端（Alex-H4）
   safeHandle('proxy:token', () => getProxyToken())
 
@@ -462,6 +591,11 @@ export function registerIpc(): void {
   safeHandle('system:open-data-dir', () => shell.openPath(app.getPath('userData')))
   safeHandle('system:open-path', (_e, targetPath: string) => {
     if (!targetPath) return
+    // A2 安全收口：仅允许打开 userData 与 IDE 注册表候选路径集内的位置，拒绝任意路径探测
+    if (!openPathAllowed(targetPath)) {
+      log('warn', 'system:open-path', `rejected path outside allowed roots: ${targetPath}`)
+      return
+    }
     // 文件存在则定位选中，否则打开其所在目录
     if (fs.existsSync(targetPath)) shell.showItemInFolder(targetPath)
     else shell.openPath(targetPath)
@@ -479,12 +613,9 @@ export function registerIpc(): void {
     })
     if (r.canceled || r.filePaths.length === 0) return { ok: false, canceled: true }
     const res = migrateDataDir(r.filePaths[0])
-    if (!res.ok) {
-      // migrateDataDir 的失败详情为服务层文本，仅落日志，不外泄给用户；对外统一走消息码
-      log('warn', 'system:set-data-dir', res.message)
-      return { ok: false, code: 'msg.common.error' } satisfies OpResult
-    }
-    return { ok: true, code: 'msg.settings.dataDirChanged', data: { needRestart: true } } satisfies OpResult<{ needRestart?: boolean }>
+    // migrateDataDir 已统一 OpResult：失败只带消息码（同目录=dataDirSame，其余异常=common.error，细节已在服务层落日志）
+    if (!res.ok) return res
+    return { ...res, data: { needRestart: true } } satisfies OpResult<{ needRestart?: boolean }>
   })
 
   // 重置软件：清除 CodeSwitch 全部本地数据（不触碰各 IDE 自身配置文件）

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NGrid, NGi, NCard, NTag, NButton, NSelect, NSpace, NEmpty, NInput,
@@ -40,6 +40,8 @@ const batchShow = ref(false)
 const batchIdeIds = ref<string[]>([])
 const batchProviderId = ref<string | undefined>(undefined)
 const batchRunning = ref(false)
+// B4：批量应用进度文本（正在应用 i/n：名称），仅运行中展示
+const batchProgress = ref('')
 
 const statusMeta = (s: IDEState['status']) => {
   const light = store.settings.theme === 'light'
@@ -160,6 +162,7 @@ async function pickManualPath(ide: IDEState) {
 function openBatch() {
   batchIdeIds.value = []
   batchProviderId.value = undefined
+  batchProgress.value = ''
   batchShow.value = true
 }
 
@@ -169,23 +172,49 @@ async function confirmBatch() {
     return
   }
   batchRunning.value = true
+  const targets = [...batchIdeIds.value]
+  const total = targets.length
   let count = 0
   let firstFailed: OpResult | null = null
   try {
     const pid = batchProviderId.value
-    for (const ideId of batchIdeIds.value) {
+    for (let i = 0; i < total; i++) {
+      const ideId = targets[i]
+      // 逐项更新进度，让用户看到当前正在写入哪个 IDE
+      const ideName = store.ides.find((x) => x.id === ideId)?.name ?? ideId
+      batchProgress.value = t('home.batchApplying', { i: i + 1, n: total, name: ideName })
       const r = await window.api.ide.apply(ideId, pid)
       if (r.ok) count++
       else if (!firstFailed) firstFailed = r
     }
     await store.refreshAll()
-    // 关键修复：不再无条件报成功。先按消息码提示首个失败项（不吞错），
-    // 仅当无任何失败时才关闭弹窗；部分成功则同时提示已应用数量。
-    if (firstFailed) showResult(firstFailed)
-    else batchShow.value = false
-    if (count > 0) message.success(t('home.batchApplyDone', { count }))
+    batchShow.value = false
+    // B4：结果统一进汇总 dialog（成功数 + 首个失败原因 + 建议），不再只弹零散 message
+    const failed = total - count
+    const failedText = firstFailed ? t(firstFailed.code ?? 'msg.common.error', firstFailed.args ?? {}) : ''
+    const content = [
+      t('home.batchResultSummary', { ok: count, failed }),
+      failedText,
+      failed > 0 ? t('home.batchResultSuggest') : ''
+    ].filter(Boolean).join('\n')
+    // pre-line 渲染保留行分隔，汇总/失败原因/建议各占一行
+    const contentRender = () => h('div', { style: 'white-space: pre-line' }, content)
+    if (failed > 0) {
+      dialog.warning({
+        title: t('home.batchResultTitle'),
+        content: contentRender,
+        positiveText: t('common.confirm')
+      })
+    } else {
+      dialog.success({
+        title: t('home.batchResultTitle'),
+        content: contentRender,
+        positiveText: t('common.confirm')
+      })
+    }
   } finally {
     batchRunning.value = false
+    batchProgress.value = ''
   }
 }
 
@@ -249,6 +278,7 @@ function batchReset() {
               <span>{{ ide.name }}</span>
             </div>
             <div class="ide-tags">
+              <n-tag v-if="ide.running && ide.installed" size="tiny" :bordered="false" type="warning">{{ t('home.running') }}</n-tag>
               <n-tag v-if="ide.installed && ide.capability !== 'manual'" size="tiny" :bordered="false" :type="ide.capability === 'auto' ? 'success' : 'info'">
                 {{ ide.capability === 'auto' ? t('home.capability.auto') : t('home.capability.assist') }}
               </n-tag>
@@ -353,8 +383,9 @@ function batchReset() {
           <div class="form-label">{{ t('providers.name') }}</div>
           <n-select v-model:value="batchProviderId" :options="providerOptions" :placeholder="t('home.selectProvider')" />
         </div>
+        <div v-if="batchRunning && batchProgress" class="batch-progress">{{ batchProgress }}</div>
         <n-space justify="end">
-          <n-button @click="batchShow = false">{{ t('common.cancel') }}</n-button>
+          <n-button :disabled="batchRunning" @click="batchShow = false">{{ t('common.cancel') }}</n-button>
           <n-button type="primary" :loading="batchRunning" @click="confirmBatch">{{ t('common.apply') }}</n-button>
         </n-space>
       </n-space>
@@ -379,4 +410,5 @@ function batchReset() {
 .ide-note { font-size: 11px; color: var(--warning); margin-top: 8px; line-height: 1.4; }
 .form-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
 .empty-hint { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+.batch-progress { font-size: 12px; color: var(--warning); }
 </style>

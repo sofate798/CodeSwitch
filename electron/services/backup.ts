@@ -163,16 +163,14 @@ function writeRawAtomic(file: string, content: string): void {
 
 /**
  * Sam-M4：恢复 sqlite 目标前检测残留 -wal 预写日志。
- * 存在非空 -wal 时返回告警文案，提示用户先正常启停 IDE 触发 checkpoint，
- * 否则 -wal 中未落盘的改动可能与恢复内容不一致。（不越权修改 sqliteStore）
+ * 存在非空 -wal 时返回告警标记 'wal'（文案由前端 i18n 渲染，服务层不携中文），
+ * 提示用户先正常启停 IDE 触发 checkpoint，否则 -wal 中未落盘的改动可能与恢复内容不一致。
  */
 function detectResidualWal(target: string): string | null {
   try {
     if (!/\.(vscdb|db|sqlite)$/i.test(target)) return null
     const wal = `${target}-wal`
-    if (fs.existsSync(wal) && fs.statSync(wal).size > 0) {
-      return '检测到 SQLite 残留的 -wal 预写日志：建议先正常启动并关闭目标 IDE 触发 checkpoint 后再恢复，否则恢复结果可能不完整'
-    }
+    if (fs.existsSync(wal) && fs.statSync(wal).size > 0) return 'wal'
   } catch {
     // 检测失败不阻断恢复
   }
@@ -242,11 +240,19 @@ function cleanupTargets(snaps: RestoreSnapshot[]): void {
  */
 export function restoreBackup(backupId: string): OpResult {
   const b = reconcile().find((x) => x.id === backupId)
-  if (!b) return { ok: false, code: 'msg.backup.restoreFailed', args: { reason: '备份不存在' } }
-  if (!fs.existsSync(b.file)) return { ok: false, code: 'msg.backup.restoreFailed', args: { reason: '备份文件已丢失' } }
+  // 失败原因分码返回（A3：服务层不携中文，细节仅落日志，用户侧文案由前端 i18n 渲染）
+  if (!b) {
+    log('warn', 'restore', `backup entry not found: ${backupId}`)
+    return { ok: false, code: 'msg.backup.restoreNotFound' }
+  }
+  if (!fs.existsSync(b.file)) {
+    log('warn', 'restore', `backup file missing: ${b.file}`)
+    return { ok: false, code: 'msg.backup.restoreNotFound' }
+  }
   const target = b.sourcePath ?? findTargetPath(b.ideId)
   if (!target) {
-    return { ok: false, code: 'msg.backup.restoreFailed', args: { reason: '无法确定恢复目标路径，请先在 IDE 管理中手动指定配置路径' } }
+    log('warn', 'restore', `cannot resolve restore target for ide: ${b.ideId}`)
+    return { ok: false, code: 'msg.backup.restoreNoTarget' }
   }
   const walWarning = detectResidualWal(target)
   const extraSources = (b.extraFiles ?? []).map((e) => e.source).filter(Boolean)
@@ -279,7 +285,8 @@ export function restoreBackup(backupId: string): OpResult {
     rollbackTargets(snaps)
     cleanupTargets(snaps)
     log('error', 'restore-failed', `${target}: ${(e as Error).message}`)
-    const args: Record<string, string | number> = { reason: (e as Error).message }
+    // 异常细节仅落日志；对外统一消息码，避免非 i18n 文案泄漏到界面
+    const args: Record<string, string | number> = {}
     if (walWarning) args.warning = walWarning
     return { ok: false, code: 'msg.backup.restoreFailed', args }
   }

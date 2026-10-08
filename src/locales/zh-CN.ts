@@ -76,6 +76,11 @@ export default {
     openFolder: '打开所在目录',
     empty: '未探测到已安装的 IDE',
     emptyHint: '点击右上角刷新重新扫描',
+    running: '运行中',
+    batchApplying: '正在应用 {i}/{n}：{name}',
+    batchResultTitle: '批量应用结果',
+    batchResultSummary: '成功 {ok} 个，失败 {failed} 个',
+    batchResultSuggest: '失败项可先关闭对应 IDE 后重试；已成功的修改不受影响。',
     status: {
       customized: '已自定义',
       default: '默认',
@@ -98,10 +103,13 @@ export default {
     group: '分组（可选）',
     groupPlaceholder: '例如：工作 / 个人',
     deleteConfirm: '确定删除「{name}」？已应用此供应商的 IDE 需要重新选择。',
+    deleteInUse: '当前正被 {count} 个 IDE（{names}）使用；删除仅清除绑定标记，不会回滚已写入 IDE 的配置。',
     deleteTitle: '删除供应商',
     empty: '还没有供应商，点击右上角新增',
     importBtn: '导入',
     exportBtn: '导出',
+    exportWarnTitle: '导出供应商',
+    exportWarn: '导出文件将包含明文 API Key，请妥善保管，勿提交到代码仓库或云盘。确定导出？',
     validation: {
       name: '请填写名称',
       baseUrl: '请填写 Base URL',
@@ -124,7 +132,11 @@ export default {
     applyConfirmTitle: '应用快照',
     applyConfirm: '将把快照「{name}」应用到当前所有已绑定的 IDE（共 {count} 个）：先把它们全部恢复为官方默认，再按快照应用；不在快照内的已绑定 IDE 会被重置为默认（每个都会先自动备份）。确定继续？',
     importBtn: '导入',
-    exportBtn: '导出'
+    exportBtn: '导出',
+    exportWarnTitle: '导出快照',
+    exportWarn: '导出文件会内嵌该快照引用的供应商（含明文 API Key），请妥善保管。确定导出？',
+    detail: '绑定明细',
+    providerRemoved: '（已删除）',
   },
   backups: {
     title: '备份管理',
@@ -148,7 +160,14 @@ export default {
     clearTitle: '清空日志',
     empty: '暂无日志',
     exportTxt: '导出 TXT',
-    exportJson: '导出 JSON'
+    exportJson: '导出 JSON',
+    searchPlaceholder: '搜索动作或详情',
+    levelAll: '全部级别',
+    levelInfo: '信息',
+    levelWarn: '警告',
+    levelError: '错误',
+    count: '共 {total} 条 · 显示 {shown} 条',
+    noMatch: '没有匹配的日志，可调整筛选条件'
   },
   settings: {
     title: '设置',
@@ -166,6 +185,8 @@ export default {
     about: '所有数据均存储在本机，API Key 使用 AES-256-GCM 加密，不会上传任何服务器。',
     checkUpdate: '检查更新',
     update: '软件更新',
+    version: '版本',
+    installUpdate: '立即安装并重启',
     dataDirChange: '更改目录',
     dataDirCustom: '当前使用自定义数据目录，更改后需重启生效。',
     dataDirChangeTitle: '更改数据目录',
@@ -190,6 +211,12 @@ export default {
       url: '网关地址',
       copy: '复制',
       copied: '已复制网关地址',
+      token: '访问令牌',
+      tokenShow: '显示',
+      tokenHide: '隐藏',
+      tokenCopied: '已复制令牌',
+      tokenFailed: '读取令牌失败',
+      tokenHint: '请求网关需携带 Authorization: Bearer <令牌>；也支持 x-codeswitch-token 请求头或 ?token= 参数',
       hint: '启用后在本机 127.0.0.1 提供 OpenAI/Anthropic 兼容接口，支持两种协议互转与流式输出。\n• 任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）填入上面的地址即可复用当前供应商。\n• Cursor 免费版的自带 AI 被官方服务端限制、无法自定义端点；可在 Cursor 内安装免费的 OpenAI 兼容扩展（如 Cline / Continue），把 Base URL 指向本网关，即可免订阅使用自定义供应商。'
     }
   },
@@ -223,6 +250,9 @@ export default {
       saveOk: '供应商已保存',
       removeOk: '供应商已删除',
       missingFields: '请填写必要字段',
+      duplicateName: '已存在同名供应商「{name}」，请更换名称',
+      invalidBaseUrl: 'Base URL 格式无效（需 http(s):// 开头）',
+      fieldTooLong: '字段内容过长，超出长度限制',
       testOk: '连接成功（{latencyMs}ms）',
       testTimeout: '连接超时',
       testAuthFailed: '鉴权失败，请检查 API Key',
@@ -237,6 +267,7 @@ export default {
     },
     snapshot: {
       createOk: '快照已创建',
+      nameRequired: '请填写快照名称（不超过 60 字）',
       notFound: '未找到该快照',
       applyOk: '已应用快照「{name}」，{applied} 个 IDE 已更新',
       applyFailed: '快照应用部分失败：{count} 个 IDE 未成功',
@@ -247,8 +278,10 @@ export default {
     },
     backup: {
       restoreOk: '已恢复备份到：{target}',
-      restoreWarn: '已恢复，但检测到残留 -wal，建议重启相关 IDE 以避免旧数据回写：{warning}',
-      restoreFailed: '恢复失败',
+      restoreWarn: '已恢复，但检测到残留 -wal 预写日志：建议先正常启停相关 IDE 触发 checkpoint，避免旧数据回写覆盖恢复结果',
+      restoreFailed: '恢复失败，详情已写入操作日志',
+      restoreNotFound: '备份不存在或备份文件已丢失',
+      restoreNoTarget: '无法确定恢复目标路径，请先在「IDE 管理」手动指定配置路径',
       removeOk: '备份已删除',
       notFound: '未找到该备份'
     },
@@ -259,13 +292,15 @@ export default {
     settings: {
       saveOk: '设置已保存',
       dataDirChanged: '数据目录已更改',
+      dataDirSame: '所选目录与当前数据目录相同，未做任何变更',
       resetDone: '已重置全部数据',
       relaunchNeeded: '需要重启后生效'
     },
     proxy: {
       started: '网关已启动（端口 {port}）',
       stopped: '网关已停止',
-      error: '网关启动失败'
+      error: '网关启动失败',
+      errorPortInUse: '端口 {port} 已被占用，请更换端口后重试'
     },
     update: {
       available: '发现新版本：{version}',
