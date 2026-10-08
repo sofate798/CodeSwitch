@@ -46,11 +46,34 @@ export function ensureTable(root: Record<string, any>, tablePath: string[]): Rec
   return cur
 }
 
-/** 删除嵌套表段（恢复默认时用）；删空后清理空的父表 */
-export function removeTable(root: Record<string, any>, tablePath: string[]): void {
-  if (tablePath.length === 0) return
-  const parentPath = tablePath.slice(0, -1)
+/**
+ * 删除嵌套表段（恢复默认时用）；删空后自下而上清理空的父表。
+ *
+ * 关键约束：路径不存在时**绝不创建**。旧实现借用 ensureTable 定位父表，
+ * 而 ensureTable 会逐级补建缺失的中间表——对「从未被本应用写入过」的 IDE 执行恢复时，
+ * 会把形如 `model_providers = {}` 的空表段凭空写进用户的 config.toml，污染用户配置。
+ * 父表在本层删除后若变空才回收，因此不会误删用户原本就存在的非空表段。
+ *
+ * @returns 是否真的删除了东西（供调用方判断“无事可做”而不必重写文件）
+ */
+export function removeTable(root: Record<string, any>, tablePath: string[]): boolean {
+  if (tablePath.length === 0) return false
+  // 自顶向下只读定位：任一中间节点缺失或不是对象，说明目标表段本就不存在
+  const ancestors: Array<Record<string, any>> = []
+  let cur = root
+  for (let i = 0; i < tablePath.length - 1; i++) {
+    const next = cur[tablePath[i]]
+    if (typeof next !== 'object' || next === null || Array.isArray(next)) return false
+    ancestors.push(cur)
+    cur = next
+  }
   const leaf = tablePath[tablePath.length - 1]
-  const parent = parentPath.length === 0 ? root : ensureTable(root, parentPath)
-  delete parent[leaf]
+  if (!(leaf in cur)) return false
+  delete cur[leaf]
+  // 自下而上回收因本次删除而变空的父表（root 自身不参与）
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    if (Object.keys(ancestors[i][tablePath[i]]).length !== 0) break
+    delete ancestors[i][tablePath[i]]
+  }
+  return true
 }

@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import axios from 'axios'
 import { store } from './store'
 import { providerValues } from './provider'
@@ -157,7 +157,24 @@ export async function stopProxy(): Promise<OpResult<ProxyStatus>> {
   if (server) {
     const s = server
     server = null
-    await new Promise<void>((r) => s.close(() => r()))
+    // server.close() 会等到所有连接结束才回调；网关常留着客户端的 keep-alive / 长连接 SSE
+    // （尤其“重启应用”“重置全部数据”等要 await stopProxy() 的路径），不强制断开就会把
+    // 退出/重启流程挂住。故先断空闲连接、再给短暂宽限，最后强制断开全部连接。
+    s.closeIdleConnections?.()
+    await new Promise<void>((r) => {
+      let settled = false
+      const done = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        r()
+      }
+      const timer = setTimeout(() => {
+        s.closeAllConnections?.()
+        done()
+      }, 1000)
+      s.close(() => done())
+    })
   }
   return { ok: true, code: 'msg.proxy.stopped', data: proxyStatus() }
 }
@@ -217,12 +234,12 @@ function isAuthed(req: http.IncomingMessage, url: URL | null): boolean {
   const token = store.get('proxyToken')
   if (!token) return true // 理论上启动时已生成；无 token 时不阻断
   const auth = req.headers['authorization']
-  if (typeof auth === 'string' && auth.startsWith('Bearer ') && auth.slice(7).trim() === token) return true
+  if (typeof auth === 'string' && auth.startsWith('Bearer ') && timingSafeEqualToken(auth.slice(7).trim(), token)) return true
   const x = req.headers['x-codeswitch-token']
-  if (typeof x === 'string' && x === token) return true
+  if (typeof x === 'string' && timingSafeEqualToken(x.trim(), token)) return true
   const ak = req.headers['x-api-key']
-  if (typeof ak === 'string' && ak.trim() === token) return true
-  if (url && url.searchParams.get('token') === token) return true
+  if (typeof ak === 'string' && timingSafeEqualToken(ak.trim(), token)) return true
+  if (url && timingSafeEqualToken(url.searchParams.get('token') ?? '', token)) return true
   return false
 }
 
@@ -259,13 +276,30 @@ function readBody(req: http.IncomingMessage): Promise<any> {
       if (tooLarge) return
       if (!data) return resolve({})
       try {
-        resolve(JSON.parse(data))
+        const parsed = JSON.parse(data)
+        // 只接受对象体：数组/字符串/数字/null 等合法 JSON 但不是合法的 chat 请求体，
+        // 若原样放行，下游 `if (!body.model)` 会在 null/primitive 上抹属性抛 TypeError（回 500）。
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) reject(new TypeError('body must be a JSON object'))
+        else resolve(parsed)
       } catch (e) {
         reject(e)
       }
     })
     req.on('error', reject)
   })
+}
+
+/**
+ * token 比对：长度相同才逐字节比，交给 timingSafeEqual（长度不等会抛错，先挡掉）。
+ * 本机回环接口下定时侧信道价值极低，但四种携带方式共用一条路径后统一加密比对更严谨。
+ */
+function timingSafeEqualToken(given: string, expected: string): boolean {
+  if (!given || given.length !== expected.length) return false
+  try {
+    return timingSafeEqual(Buffer.from(given, 'utf8'), Buffer.from(expected, 'utf8'))
+  } catch {
+    return false
+  }
 }
 
 /** 入站 body 读取失败归类：超限 413，其余（JSON 解析失败等）400 */
@@ -324,13 +358,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
 
   // API 路由需鉴权
-  if (!isAuthed(req, url)) return sendError(res, 401, '无效或缺失的访问令牌', 'openai')
+  if (!isAuthed(req, url)) return sendError(res, 401, 'invalid or missing access token', 'openai')
 
   const act = activeProvider()
   if (!act) {
     // 密钥不可用/解析失败 -> 502 + 非敏感文案；未选择供应商 -> 503
     if (lastActiveError) return sendError(res, 502, lastActiveError, 'openai')
-    return sendError(res, 503, '未选择转发目标供应商', 'openai')
+    return sendError(res, 503, 'no target provider selected in CodeSwitch', 'openai')
   }
 
   const ac = new AbortController()
@@ -339,7 +373,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (pathname.endsWith('/models')) return handleModels(act, res, ac.signal)
   if (pathname.endsWith('/chat/completions')) return handleChatCompletions(act, req, res, ac.signal)
   if (pathname.endsWith('/messages')) return handleMessages(act, req, res, ac.signal)
-  return sendError(res, 404, `未知路由: ${pathname}`, 'openai')
+  return sendError(res, 404, `unknown route: ${pathname}`, 'openai')
 }
 
 async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
@@ -488,7 +522,7 @@ async function relayError(res: http.ServerResponse, r: any, format: 'openai' | '
   } catch {
     text = ''
   }
-  sendError(res, r.status || 502, text.slice(0, 800) || `上游返回 ${r.status}`, format)
+  sendError(res, r.status || 502, text.slice(0, 800) || `upstream returned ${r.status}`, format)
 }
 
 function sendError(res: http.ServerResponse, code: number, message: string, format: 'openai' | 'anthropic'): void {

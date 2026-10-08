@@ -35,13 +35,22 @@ const providerOptions = computed(() =>
   store.providers.map((p) => ({ label: `${p.name} · ${p.protocol === 'openai' ? 'OpenAI' : 'Anthropic'}`, value: p.id }))
 )
 
+/** proxy:status / system:get-data-dir 是值型通道：主进程失败时真实 reject，故在本函数内兜底，调用方（onMounted / 重置流程）无需再接异常 */
 async function loadProxy() {
-  proxy.value = await window.api.proxy.status()
-  portInput.value = proxy.value.port
+  try {
+    proxy.value = await window.api.proxy.status()
+    portInput.value = proxy.value.port
+  } catch {
+    message.error(t('msg.common.error'))
+  }
 }
 
 async function loadDataDir() {
-  dataDir.value = await window.api.system.getDataDir()
+  try {
+    dataDir.value = await window.api.system.getDataDir()
+  } catch {
+    message.error(t('msg.common.error'))
+  }
 }
 
 async function loadToken() {
@@ -141,7 +150,13 @@ async function copyToken() {
 }
 
 async function save(patch: Partial<AppSettings>) {
-  await window.api.settings.set(patch)
+  try {
+    await window.api.settings.set(patch)
+  } catch {
+    // settings:set 为值型通道（回写最新全量设置），失败会 reject；写不进去时必须提示，不能静默“看起来已切换”
+    message.error(t('msg.common.error'))
+    return
+  }
   await store.refreshSettings()
 }
 

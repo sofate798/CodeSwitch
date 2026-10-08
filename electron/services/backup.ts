@@ -294,13 +294,16 @@ export function restoreBackup(backupId: string): OpResult {
 
 /** 删除指定备份（记录 + 文件），返回 msg.backup.removeOk */
 export function removeBackup(backupId: string): OpResult {
-  const list = store.get('backups')
-  const b = list.find((x) => x.id === backupId)
+  // 列表页走的是 reconcile（store + 磁盘 meta 合并），删除也必须按同一集合查条目：
+  // 否则“仅存在于 meta.json”的历史条目在界面可点删除，却会报“未找到”且磁盘文件永久残留。
+  const all = reconcile()
+  const b = all.find((x) => x.id === backupId)
   if (!b) return { ok: false, code: 'msg.backup.notFound' }
   deleteBackupFiles(b)
-  store.set('backups', list.filter((x) => x.id !== backupId))
-  // 同步刷新该 IDE 的 meta.json
-  writeMeta(b.ideId, list.filter((x) => x.ideId === b.ideId && x.id !== backupId))
+  const list = store.get('backups')
+  if (list.some((x) => x.id === backupId)) store.set('backups', list.filter((x) => x.id !== backupId))
+  // 同步刷新该 IDE 的 meta.json：以合并后的剩余条目为准（不丢仅存在于磁盘的历史条目）
+  writeMeta(b.ideId, all.filter((x) => x.ideId === b.ideId && x.id !== backupId))
   log('info', 'backup-remove', backupId)
   return { ok: true, code: 'msg.backup.removeOk' }
 }

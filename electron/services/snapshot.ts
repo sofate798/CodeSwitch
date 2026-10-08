@@ -74,7 +74,9 @@ export function removeSnapshot(id: string): OpResult {
 export function insertSnapshot(input: { name: string; description?: string; createdAt?: number; ideBindings: Record<string, { providerId: string | null }> }): OpResult<Snapshot> {
   const list = store.get('snapshots')
   const names = new Set(list.map((s) => s.name))
-  let name = input.name?.trim() || '导入的快照'
+  // 名称由调用方（handler）按当前 locale 兜底为本地化默认名；此处仅作最后防线用语言中立的 ASCII 占位，
+  // 不在服务层烘焙任何中文字面量（否则会随导入数据泄漏到界面）。
+  let name = input.name?.trim() || 'Imported Snapshot'
   if (names.has(name)) {
     let i = 2
     while (names.has(`${name} (${i})`)) i++

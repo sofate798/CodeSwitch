@@ -49,8 +49,16 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  // settings:get 是值型通道（载荷为裸 AppSettings），主进程失败时会真实 reject。
+  // 本函数在 App.vue onMounted 直接调用且无人接 rejection，故必须就地兜底：
+  // 失败保留当前值（首屏即默认值），不把原始异常文本冒泡到控制台。
   async function refreshSettings() {
-    settings.value = await window.api.settings.get()
+    try {
+      settings.value = await window.api.settings.get()
+    } catch {
+      error.value = 'msg.common.error'
+      return
+    }
     // Jack-Med13：界面语言以后端设置为单一数据源，localStorage('cs-locale') 仅作首屏回退。
     const target = settings.value.locale
     if (target && i18n.global.locale.value !== target) {

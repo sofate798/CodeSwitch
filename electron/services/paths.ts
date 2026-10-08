@@ -21,8 +21,13 @@ function bootstrapFile(): string {
   return path.join(app.getPath('appData'), 'codeswitch-datadir.json')
 }
 
-/** 迁移时需要一并搬运的数据条目（electron-store 主文件 + 备份目录 + 日志目录） */
-const MIGRATE_ITEMS = ['config.json', 'backups', 'logs']
+/**
+ * 迁移时需要一并搬运的数据条目。
+ * 关键：secure/ 必须搬运——里面是加密供应商 API Key 的主密钥（master.key）。
+ * 若只搬 config.json 不搬主密钥，重启后新目录下 ensureMasterKey() 找不到旧密钥
+ * 会“首次运行”式新生成一把，历史 enc2: 密文从此无法解密，所有 Key 只能重输。
+ */
+const MIGRATE_ITEMS = ['config.json', 'backups', 'logs', 'secure']
 
 function readBootstrap(): string | null {
   try {
@@ -84,6 +89,12 @@ export function migrateDataDir(newDir: string): OpResult<{ newDir: string }> {
   }
   try {
     fs.mkdirSync(newDir, { recursive: true })
+    // 目标位置已有主密钥时先告警：下面会用当前目录的密钥覆盖，
+    // 而留在旧自定义目录里的密文从此无法解密（多发生在两个自定义目录间来回切）。
+    const destKey = path.join(newDir, 'secure', 'master.key')
+    if (fs.existsSync(destKey)) {
+      log('warn', 'migrate-data-dir', `destination already has a master key at ${destKey}; it will be overwritten by the current one`)
+    }
     for (const item of MIGRATE_ITEMS) {
       const src = path.join(oldDir, item)
       const dst = path.join(newDir, item)

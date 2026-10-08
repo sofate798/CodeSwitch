@@ -74,8 +74,31 @@ function createWindow(): void {
   // 启动时按已保存的主题应用一次标题栏配色，避免浅色用户看到黑条
   applyTitleBarTheme((store.get('settings') as { theme?: string })?.theme ?? 'dark')
   win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // 外链收口：openExternal 会把 URL 交给系统 shell，非 http(s)/mailto 的 scheme（如 file: / 自定义协议）
+    // 可能直接拉起本地程序或泄露本地路径，此处一律丢弃并落日志。
+    let protocol = ''
+    try {
+      protocol = new URL(details.url).protocol
+    } catch {
+      protocol = ''
+    }
+    if (protocol === 'https:' || protocol === 'http:' || protocol === 'mailto:') {
+      shell.openExternal(details.url).catch((e) => log('error', 'openExternal', String((e as Error)?.message ?? e)))
+    } else {
+      log('warn', 'window-open', `rejected non-web scheme: ${details.url.slice(0, 120)}`)
+    }
     return { action: 'deny' }
+  })
+
+  // 阻止主窗口导航离开应用本体（渲染进程只跑本地打包资源 / dev server）。
+  // 没有此守卫时，一个意外跳转就会把界面换成外部页面，同时失去 window.api 桥接。
+  win.webContents.on('will-navigate', (e, url) => {
+    const self = process.env['ELECTRON_RENDERER_URL']
+    const allowed = self ? url.startsWith(self) : url.startsWith('file://') || url.startsWith('app://')
+    if (!allowed) {
+      e.preventDefault()
+      log('warn', 'will-navigate', `blocked navigation to ${url.slice(0, 120)}`)
+    }
   })
 
   // 关闭按钮 -> 最小化到托盘

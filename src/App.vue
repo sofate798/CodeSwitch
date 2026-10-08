@@ -132,7 +132,7 @@ const routeTitle = computed(() => t(String(route.meta.titleKey ?? '')))
 onMounted(() => {
   // 建立系统主题监听（OS 偏好变化时实时更新）。
   mediaQuery.addEventListener('change', onMediaChange)
-  // store.refreshAll 内部已 try/catch 兜底、绝不向外抛，这里无需再 .catch。
+  // refreshAll / refreshSettings 内部均已 try/catch 兜底、绝不向外抛（值型通道失败会 reject，已在内接住），这里无需再 .catch。
   store.refreshAll()
   store.refreshSettings()
 })

@@ -8,12 +8,8 @@
  *    的双向映射（见下方各 *Req / *Resp 函数）。
  *  - 已知限制：流式（SSE）场景下的工具调用增量分片（OpenAI delta.tool_calls 与
  *    Anthropic input_json_delta）尚未做逐块拼装，流式仅保证纯文本正确。若客户端在流式
- *    下依赖工具调用，请改用非流式，或参见 TRANSLATE_LIMITATION 常量。
+ *    下依赖工具调用，请改用非流式（README 与「项目开发文档」同处说明该边界）。
  */
-
-/** 供上层在返回信息中明确当前转换能力边界 */
-export const TRANSLATE_LIMITATION =
-  '跨协议转换当前完整支持纯文本对话（含流式）；工具调用仅支持非流式请求/响应，流式工具调用增量分片尚未映射。'
 
 /** OpenAI 停止原因 → Anthropic */
 export function mapFinish(reason: string | null | undefined): string {
@@ -262,11 +258,12 @@ export interface SseStream {
 }
 
 export function sseSetup(res: SseResponse): void {
+  // 不写 Access-Control-Allow-Origin：受控 CORS 已由 proxy.ts 的 applyCors 按本机 Origin 回显，
+  // 若此处补 '*' 会覆盖那道收紧（writeHead 的同名头优先级高于 setHeader），等于把 SSE 响应又放开到任意站点。
   res.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
-    connection: 'keep-alive',
-    'access-control-allow-origin': '*'
+    connection: 'keep-alive'
   })
 }
 

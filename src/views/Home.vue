@@ -178,7 +178,14 @@ function confirmReset(ide: IDEState) {
 }
 
 async function pickManualPath(ide: IDEState) {
-  const picked = await window.api.system.pickFile()
+  let picked: string | null
+  try {
+    // system:pick-file 是值型通道（成功载荷是路径字符串或 null），主进程失败时真实 reject
+    picked = await window.api.system.pickFile()
+  } catch {
+    message.error(t('msg.common.error'))
+    return
+  }
   if (!picked) return
   const r = await window.api.ide.manualAdd(ide.id, picked)
   showResult(r)

@@ -191,12 +191,6 @@ export function decrypt(cipher: string): string {
   throw new KeyUnavailableError('密文格式无法识别，且不允许明文回退')
 }
 
-/** 脱敏显示：统一为 sk-****xxxx 规格（前缀 sk- + **** + 明文后 4 位） */
-export function maskKey(value: string): string {
-  if (!value) return ''
-  return `sk-****${value.slice(-4)}`
-}
-
 /** 解密密文并返回明文后 4 位；短于 8 位的密钥不回显尾部（避免短密钥接近明文），任何失败/过短返回 '' */
 export function keyTail(cipher: string): string {
   try {

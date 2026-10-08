@@ -47,8 +47,8 @@ export const store = new Store<Schema>({
  * system:reset-all 会连续改多个键）。runExclusive 把这类多键操作排成一条链，
  * 保证同一时刻只有一个临界区在执行，消除并发读改写竞态。
  *
- * 用法（handler 侧由 B4 调用）：
- *   await runExclusive(() => { const p = store.get('providers'); ...; setMany([...]) })
+ * 用法（handler 侧）：
+ *   await mutate((s) => { const p = s.get('providers'); ...; s.set('providers', [...]) })
  */
 let chain: Promise<unknown> = Promise.resolve()
 
@@ -65,12 +65,4 @@ export function runExclusive<T>(task: () => T | Promise<T>): Promise<T> {
 /** 在串行队列内对 store 做一次读改写事务（便于多键原子更新） */
 export function mutate<T>(fn: (s: Store<Schema>) => T | Promise<T>): Promise<T> {
   return runExclusive(() => fn(store))
-}
-
-/**
- * 批量写入：在同一临界区内连续 set 多个键，尽量避免多次磁盘往返造成的中间态被观察到。
- * 传入键值对数组，按顺序写入。
- */
-export function setMany(entries: Array<[keyof Schema, unknown]>): void {
-  for (const [k, v] of entries) store.set(k as never, v as never)
 }

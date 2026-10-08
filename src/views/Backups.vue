@@ -29,6 +29,12 @@ async function load() {
   listLoading.value = true
   try {
     backups.value = await window.api.backup.list(ideFilter.value || undefined)
+  } catch {
+    // backup:list 是值型通道（载荷为裸数组），主进程失败时真实 reject。
+    // 不接住则：onMounted / 还原流程留下未处理 rejection，且列表停留在陈旧数据。
+    // 此处收口并清空，保证“看到的即当前真实可读到的一页”，失败提示只在本函数发一次。
+    backups.value = []
+    message.error(t('msg.common.error'))
   } finally {
     listLoading.value = false
   }
@@ -38,8 +44,15 @@ onMounted(async () => {
   await store.refreshAll()
   // 从扫描结果构建筛选选项（含备份对应但未安装的 IDE 也一并展示）
   const scanned = new Map(store.ides.map((i) => [i.id, i.name]))
-  const all = await window.api.backup.list()
+  let all: BackupEntry[] = []
+  try {
+    all = await window.api.backup.list()
+  } catch {
+    // 选项构建是锦上添花，失败不重复弹错（紧随的 load() 会统一提示）
+    all = []
+  }
   const names = new Map(all.map((b) => [b.ideId, scanned.get(b.ideId) ?? b.ideId]))
+  for (const i of store.ides) if (!names.has(i.id)) names.set(i.id, i.name)
   ideOptions.value = [
     { label: t('backups.allIdes'), value: '' },
     ...Array.from(names.entries()).map(([id, name]) => ({ label: name, value: id }))

@@ -30,6 +30,26 @@ function safeHandle(channel: string, fn: (event: Electron.IpcMainInvokeEvent, ..
   })
 }
 
+/**
+ * 值型通道（成功载荷是裸数据：数组 / AppSettings / ProxyStatus / string 等）的包装。
+ *
+ * 不能复用 safeHandle：它出错时回 { ok:false, code }，而该形状对裸数据通道不是合法值，
+ * 会被渲染端当成“成功拿到的数据”直接赋值（ide:scan 返回对象 -> store.ides 不再是数组，
+ * 页面运行时报错且 error 仍为 null；proxy:status 返回对象 -> 端口/URL 变 undefined），
+ * 既静默吞掉失败又破坏类型前提。此处记录日志后原样抛出，让 invoke 在渲染端 reject，
+ * 由已有的 allSettled / try-catch 进入真正的失败分支（展示消息码，不展示原始异常文本）。
+ */
+function safeHandleValue<T>(channel: string, fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => T | Promise<T>): void {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      return await fn(event, ...args)
+    } catch (err) {
+      log('error', `ipc:${channel}`, err instanceof Error ? err.message : String(err))
+      throw err
+    }
+  })
+}
+
 interface DialogDict {
   exportProviders: string
   importProviders: string
@@ -39,6 +59,8 @@ interface DialogDict {
   selectDataDir: string
   /** .csnap 文件过滤器显示名 */
   snapshotFilter: string
+  /** 导入的快照未带名称时的默认名（属于落盘数据，必须随 locale） */
+  snapshotDefaultName: string
 }
 
 /**
@@ -53,7 +75,8 @@ const DIALOG_I18N: Record<'zh' | 'en', DialogDict> = {
     importSnapshot: '导入快照',
     exportLogs: '导出日志',
     selectDataDir: '选择数据目录',
-    snapshotFilter: 'CodeSwitch 快照'
+    snapshotFilter: 'CodeSwitch 快照',
+    snapshotDefaultName: '导入的快照'
   },
   en: {
     exportProviders: 'Export Providers',
@@ -62,7 +85,8 @@ const DIALOG_I18N: Record<'zh' | 'en', DialogDict> = {
     importSnapshot: 'Import Snapshot',
     exportLogs: 'Export Logs',
     selectDataDir: 'Select Data Directory',
-    snapshotFilter: 'CodeSwitch Snapshot'
+    snapshotFilter: 'CodeSwitch Snapshot',
+    snapshotDefaultName: 'Imported Snapshot'
   }
 }
 
@@ -171,7 +195,7 @@ function openPathAllowed(targetPath: string): boolean {
 
 export function registerIpc(): void {
   // ---- IDE ----
-  safeHandle('ide:scan', () => scanIDEs())
+  safeHandleValue('ide:scan', () => scanIDEs())
   safeHandle('ide:apply', (_e, ideId: string, providerId: string) => applyProvider(ideId, providerId))
   safeHandle('ide:reset', async (_e, ideId: string) => {
     if (ideId !== 'all') return resetIDE(ideId)
@@ -192,11 +216,11 @@ export function registerIpc(): void {
     return { ok: true, code: 'msg.ide.resetAllDone', args: { count } } satisfies OpResult
   })
   safeHandle('ide:manual-add', (_e, ideId: string, path: string) => manualAdd(ideId, path))
-  safeHandle('ide:check-running', (_e, ideId: string) => checkIdeRunning(ideId))
+  safeHandleValue('ide:check-running', (_e, ideId: string) => checkIdeRunning(ideId))
   safeHandle('ide:generate-config', (_e, ideId: string, providerId: string) => generateConfig(ideId, providerId))
 
   // ---- Provider ----
-  safeHandle('provider:list', () => {
+  safeHandleValue('provider:list', () => {
     const list = store.get('providers') as Provider[]
     // keyTail 内部已容错（失败返回 ''），不会抛异常；仅输出明文后 4 位供前端脱敏展示
     return list.map((p) => ({ ...p, keyTail: keyTail(p.apiKey) }))
@@ -367,7 +391,7 @@ export function registerIpc(): void {
   })
 
   // ---- Snapshot ----
-  safeHandle('snapshot:list', () => listSnapshots())
+  safeHandleValue('snapshot:list', () => listSnapshots())
   safeHandle('snapshot:create', (_e, name: string, desc: string) => {
     // 主进程收口：名称 trim 后必填且不超长，备注限长（前端同步校验，此处兜底）
     const n = trimmed(name)
@@ -491,8 +515,10 @@ export function registerIpc(): void {
       remapped[ideId] = { providerId: oldPid ? idMap.get(oldPid) ?? null : null }
     }
     // 3) 插入快照
+    // 名称缺失/仅空白时统一回落到当前 locale 的默认名，绝不下沉到服务层去兜底本地化文案。
+    const importedName = (typeof parsed.snapshot.name === 'string' ? parsed.snapshot.name.trim() : '') || d.snapshotDefaultName
     const snap = insertSnapshot({
-      name: typeof parsed.snapshot.name === 'string' ? parsed.snapshot.name : '导入的快照',
+      name: importedName,
       description: typeof parsed.snapshot.description === 'string' ? parsed.snapshot.description : '',
       createdAt: typeof parsed.snapshot.createdAt === 'number' ? parsed.snapshot.createdAt : now,
       ideBindings: remapped
@@ -505,12 +531,12 @@ export function registerIpc(): void {
   })
 
   // ---- Backup ----
-  safeHandle('backup:list', (_e, ideId?: string) => listBackups(ideId))
+  safeHandleValue('backup:list', (_e, ideId?: string) => listBackups(ideId))
   safeHandle('backup:restore', (_e, backupId: string) => restoreBackup(backupId))
   safeHandle('backup:remove', (_e, backupId: string) => removeBackup(backupId))
 
   // ---- Log ----
-  safeHandle('log:list', () => getLogs())
+  safeHandleValue('log:list', () => getLogs())
   safeHandle('log:clear', () => clearLogs())
 
   // 日志导出：按 txt / json 写出当前已加载的日志（按时间正序）
@@ -545,8 +571,8 @@ export function registerIpc(): void {
   })
 
   // ---- Settings ----
-  safeHandle('settings:get', () => store.get('settings'))
-  safeHandle('settings:set', (_e, patch: Partial<AppSettings>) => {
+  safeHandleValue('settings:get', () => store.get('settings'))
+  safeHandleValue('settings:set', (_e, patch: Partial<AppSettings>) => {
     // 白名单校验：非法枚举/类型的键忽略并落警告，杜绝脏入参落盘后破坏界面/启动项
     const rules: Record<keyof AppSettings, (v: unknown) => boolean> = {
       theme: (v) => v === 'system' || v === 'dark' || v === 'light',
@@ -574,14 +600,14 @@ export function registerIpc(): void {
   })
 
   // ---- Proxy (本地转发网关) ----
-  safeHandle('proxy:status', () => proxyStatus())
+  safeHandleValue('proxy:status', () => proxyStatus())
   // 透传完整 OpResult<ProxyStatus>（A4）：失败带消息码（如端口占用），data 仍携最新状态
   safeHandle('proxy:configure', async (_e, patch: Partial<ProxyConfig>) => configureProxy(patch))
   // 网关本地鉴权 token：供前端在设置页展示，用户据此配置客户端（Alex-H4）
-  safeHandle('proxy:token', () => getProxyToken())
+  safeHandleValue('proxy:token', () => getProxyToken())
 
   // ---- System ----
-  safeHandle('system:pick-file', async (_e, defaultPath?: string) => {
+  safeHandleValue('system:pick-file', async (_e, defaultPath?: string) => {
     const r = await dialog.showOpenDialog({
       properties: ['openFile'],
       defaultPath: defaultPath || undefined
@@ -602,7 +628,7 @@ export function registerIpc(): void {
   })
 
   // 数据目录：获取当前生效目录与自定义目录
-  safeHandle('system:get-data-dir', () => getDataDirInfo())
+  safeHandleValue('system:get-data-dir', () => getDataDirInfo())
 
   // 数据目录：弹目录选择框，迁移数据并写入引导文件；成功后提示重启
   safeHandle('system:set-data-dir', async () => {

@@ -179,36 +179,6 @@ export async function writeItem(
   }
 }
 
-/** 删除一行（恢复默认时用） */
-export async function deleteItem(
-  dbPath: string,
-  table: string,
-  keyCol: string,
-  rowKey: string
-): Promise<void> {
-  if (!fs.existsSync(dbPath)) return
-  const db = await openDb(dbPath)
-  const tmp = `${dbPath}.tmp-${process.pid}`
-  try {
-    db.run(`DELETE FROM ${table} WHERE ${keyCol} = ?`, [rowKey])
-    const data: Uint8Array = db.export()
-    fs.writeFileSync(tmp, Buffer.from(data))
-    fs.renameSync(tmp, dbPath)
-    // H3：整库重写后删除残留 -wal/-shm，避免回放不一致
-    for (const suffix of ['-wal', '-shm']) {
-      try {
-        fs.rmSync(`${dbPath}${suffix}`, { force: true })
-      } catch {
-        // 忽略
-      }
-    }
-  } finally {
-    db.close()
-    // L1：失败时清理遗留临时文件
-    try {
-      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
-    } catch {
-      // 忽略
-    }
-  }
-}
+// 说明：恢复默认走 writeItem 写回“清除对应字段后的行 JSON”（而非删整行），
+// 因为凭证行往往同时承载 IDE 自己的其它字段；历史上曾提供 deleteItem（删整行），
+// 因无任何调用方且语义危于丢字段，已移除。

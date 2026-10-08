@@ -222,8 +222,9 @@ export async function applyProvider(ideId: string, providerId: string): Promise<
     return { ok: false, code: 'msg.ide.incompatibleProtocol', args: { ide: ide.name, protocol: provider.protocol } }
   }
 
-  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env，此前仅 sqlite/toml）
-  if (await isIdeRunning(ide.processNames)) {
+  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env，此前仅 sqlite/toml）。
+  // 写入拦截走 fresh 模式（绕过进程快照缓存），不允许任何陈旧窗口。
+  if (await isIdeRunning(ide.processNames, true)) {
     return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } }
   }
 
@@ -376,8 +377,8 @@ export async function resetIDE(ideId: string): Promise<OpResult> {
     return { ok: true, canceled: true, code: 'msg.ide.notWritable' }
   }
 
-  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env）
-  if (await isIdeRunning(ide.processNames)) {
+  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env）；同为写入拦截，走 fresh 模式
+  if (await isIdeRunning(ide.processNames, true)) {
     return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } }
   }
 
@@ -400,30 +401,43 @@ export async function resetIDE(ideId: string): Promise<OpResult> {
 }
 
 /**
- * M6：清理历史上 applyFieldsToConfig 注入的 protocol 私有键。
- * 该键曾写在各字段父路径下（如 language_models.openai.protocol），恢复默认时一并移除，
- * 避免为此前用户残留孤儿键。字段为扁平键（无父路径）时为空操作，安全。
+ * M6：按字段映射清除值 + 清理历史上 applyFieldsToConfig 注入的 protocol 私有键。
+ * 返回是否真的删过东西：调用方据此决定是否备份 + 回写，避免“恢复默认”对未碰过的
+ * 用户文件做无意义的重写（JSON 重排缩进 / TOML 丢失注释 / 备份列表塞满无效条目）。
  */
-function stripInjectedProtocol(obj: any, fields: FieldMap): void {
+function clearFields(obj: any, fields: FieldMap): boolean {
+  let changed = false
+  const paths = [fields.apiKey, fields.baseUrl, fields.model]
+  for (const p of paths) {
+    if (p && getPath(obj, p) !== undefined) {
+      unsetPath(obj, p)
+      changed = true
+    }
+  }
+  // 该键曾写在各字段父路径下（如 language_models.openai.protocol），恢复默认时一并移除
   const parents = new Set<string>()
-  for (const p of [fields.apiKey, fields.baseUrl, fields.model]) {
+  for (const p of paths) {
     if (!p) continue
     const idx = p.lastIndexOf('.')
     if (idx > 0) parents.add(p.slice(0, idx))
   }
-  for (const parent of parents) unsetPath(obj, `${parent}.protocol`)
+  for (const parent of parents) {
+    if (getPath(obj, `${parent}.protocol`) !== undefined) {
+      unsetPath(obj, `${parent}.protocol`)
+      changed = true
+    }
+  }
+  return changed
 }
 
 function resetJson(ide: IDEAdapterDef, s: JsonSpec, target: string): void {
   const { data, error } = readJsonSafe(target)
   if (error && error !== 'not_found') throw new Error(`配置文件无法解析（${error}），已取消恢复以保护原文件`)
+  const cfg = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : {}
+  // 先在副本上试清：一个字段都没命中说明本应用从未写过该文件，不备份也不重写
+  if (!clearFields(cfg, s.fields)) return
   const bk = backupFile(ide.id, target, 'reset')
   try {
-    const cfg = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : {}
-    if (s.fields.apiKey) unsetPath(cfg, s.fields.apiKey)
-    if (s.fields.baseUrl) unsetPath(cfg, s.fields.baseUrl)
-    if (s.fields.model) unsetPath(cfg, s.fields.model)
-    stripInjectedProtocol(cfg, s.fields) // M6
     writeJsonAtomic(target, cfg)
   } catch (e) {
     if (bk) restoreBackup(bk.id)
@@ -444,16 +458,12 @@ async function resetSqlite(ide: IDEAdapterDef, s: SqliteSpec, dbPath: string): P
   } catch {
     return // 非 JSON 值不动，避免破坏
   }
+  let changed = clearFields(obj, s.valueFields)
+  if (s.anthropicValueFields) changed = clearFields(obj, s.anthropicValueFields) || changed
+  // 行内并无本应用写入的字段：既不写回磁盘，也不留一条无意义的备份
+  if (!changed) return
   const bk = backupFile(ide.id, dbPath, 'reset', [`${dbPath}-wal`, `${dbPath}-shm`])
   try {
-    const clear = (fm: FieldMap) => {
-      if (fm.apiKey) unsetPath(obj, fm.apiKey)
-      if (fm.baseUrl) unsetPath(obj, fm.baseUrl)
-      if (fm.model) unsetPath(obj, fm.model)
-      stripInjectedProtocol(obj, fm) // M6（sqlite 字段多为扁平键，通常为空操作，防御性清理）
-    }
-    clear(s.valueFields)
-    if (s.anthropicValueFields) clear(s.anthropicValueFields)
     await writeItem(dbPath, s.table, s.keyColumn, s.valueColumn, row.rowKey, JSON.stringify(obj), row.isBlob)
   } catch (e) {
     if (bk) restoreBackup(bk.id)
@@ -462,30 +472,41 @@ async function resetSqlite(ide: IDEAdapterDef, s: SqliteSpec, dbPath: string): P
 }
 
 function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
-  const bk = backupFile(ide.id, target, 'reset')
-  try {
-    const doc = readToml(target)
-    if (s.table) removeTable(doc, s.table)
-    // 仅当我们设置的 provider 名生效时才移除顶层标量，避免破坏用户自有配置
-    if (s.scalars) {
-      for (const k of Object.keys(s.scalars)) {
-        if (k === 'model_provider' && doc[k] === 'codeswitch') delete doc[k]
+  // TOML 整体重写会丢用户注释，所以“没得可清”时必须原文件不动：先在解析副本上算完变更，
+  // 确认确有本应用写入的表段/标量才备份 + 回写。
+  const doc = readToml(target)
+  let changed = s.table ? removeTable(doc, s.table) : false
+  // 仅当我们设置的 provider 名生效时才移除顶层标量，避免破坏用户自有配置
+  if (s.scalars) {
+    for (const k of Object.keys(s.scalars)) {
+      if (k === 'model_provider' && doc[k] === 'codeswitch') {
+        delete doc[k]
+        changed = true
       }
     }
-    // M6：toml 策略从不注入 protocol 私有键（apply 仅写 scalars/table），故无需清理
+  }
+  // M6：toml 策略从不注入 protocol 私有键（apply 仅写 scalars/table），故无需清理
+  const sp = s.secretFile ? resolvePath(s.secretFile.path) : null
+  let secretDoc: any = null
+  if (sp && s.secretFile && fs.existsSync(sp)) {
+    const j = JSON.parse(fs.readFileSync(sp, 'utf8'))
+    if (j && typeof j === 'object' && s.secretFile.field in j) {
+      delete j[s.secretFile.field]
+      secretDoc = j
+      changed = true
+    }
+  }
+  if (!changed) return
+  const bk = backupFile(ide.id, target, 'reset')
+  try {
     writeTomlAtomic(target, doc)
-    if (s.secretFile) {
-      const sp = resolvePath(s.secretFile.path)
-      if (sp && fs.existsSync(sp)) {
-        const bk2 = backupFile(ide.id, sp, 'reset:secret')
-        try {
-          const j = JSON.parse(fs.readFileSync(sp, 'utf8'))
-          delete j[s.secretFile.field]
-          writeJsonAtomic(sp, j)
-        } catch (e) {
-          if (bk2) restoreBackup(bk2.id)
-          throw e
-        }
+    if (sp && secretDoc !== null) {
+      const bk2 = backupFile(ide.id, sp, 'reset:secret')
+      try {
+        writeJsonAtomic(sp, secretDoc)
+      } catch (e) {
+        if (bk2) restoreBackup(bk2.id)
+        throw e
       }
     }
   } catch (e) {
@@ -495,10 +516,13 @@ function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
 }
 
 function resetEnv(ide: IDEAdapterDef, s: EnvSpec, target: string): void {
+  const keys = [s.mapping.apiKey, s.mapping.baseUrl, s.mapping.model].filter(Boolean) as string[]
+  if (keys.length === 0) return
+  // M6：env 策略从不注入 protocol 私有键（仅按 mapping 增删），故无需清理
+  const env = readEnv(target)
+  if (!keys.some((k) => k in env)) return // 文件里没有我们写过的键：不备份也不重写
   const bk = backupFile(ide.id, target, 'reset')
   try {
-    // M6：env 策略从不注入 protocol 私有键（仅按 mapping 增删），故无需清理
-    const keys = [s.mapping.apiKey, s.mapping.baseUrl, s.mapping.model].filter(Boolean) as string[]
     removeEnvKeys(target, keys)
   } catch (e) {
     if (bk) restoreBackup(bk.id)

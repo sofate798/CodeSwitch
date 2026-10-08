@@ -31,6 +31,8 @@ function stripQuotes(v: string): string {
 export function writeEnvAtomic(file: string, updates: Record<string, string>): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const original = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  // 保留原文件换行风格，避免一次写入把用户已有的 CRLF 整份改成 LF
+  const eol = original.includes('\r\n') ? '\r\n' : '\n'
   const lines = original.split(/\r?\n/)
   const seen = new Set<string>()
   const next = lines.map((line) => {
@@ -48,8 +50,8 @@ export function writeEnvAtomic(file: string, updates: Record<string, string>): v
     if (val === '' || seen.has(key)) continue
     next.push(`${key}=${val}`)
   }
-  let text = next.join('\n')
-  if (!text.endsWith('\n')) text += '\n'
+  let text = next.join(eol)
+  if (!text.endsWith('\n')) text += eol
   const tmp = `${file}.tmp-${process.pid}`
   try {
     fs.writeFileSync(tmp, text, 'utf8')
@@ -64,16 +66,21 @@ export function writeEnvAtomic(file: string, updates: Record<string, string>): v
   }
 }
 
-/** 删除若干键所在行（恢复默认时用） */
+/** 删除若干键所在行（恢复默认时用）；无键命中时不碰文件 */
 export function removeEnvKeys(file: string, keys: string[]): void {
   if (!fs.existsSync(file) || keys.length === 0) return
   const keySet = new Set(keys)
-  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter((line) => {
+  const original = fs.readFileSync(file, 'utf8')
+  // 保留原文件换行风格：不能把 CRLF 文件按 LF 重拼，否则一次“恢复默认”就改写了整份 .env 的行尾
+  const eol = original.includes('\r\n') ? '\r\n' : '\n'
+  const lines = original.split(/\r?\n/)
+  if (!lines.some((line) => { const m = line.match(LINE_RE); return !!m && keySet.has(m[1]) })) return
+  const kept = lines.filter((line) => {
     const m = line.match(LINE_RE)
     return !(m && keySet.has(m[1]))
   })
-  let text = lines.join('\n')
-  if (text && !text.endsWith('\n')) text += '\n'
+  let text = kept.join(eol)
+  if (text && !text.endsWith('\n')) text += eol
   const tmp = `${file}.tmp-${process.pid}`
   try {
     fs.writeFileSync(tmp, text, 'utf8')
