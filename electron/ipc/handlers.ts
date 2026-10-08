@@ -247,7 +247,9 @@ export function registerIpc(): void {
         protocol: clean.protocol,
         baseUrl: clean.baseUrl || existing.baseUrl,
         model: clean.model || existing.model,
-        group: clean.group || existing.group,
+        // group 为可选字段（与创建路径 clean.group||undefined 对齐）：绝不能用 || existing.group 兜底，
+        // 否则用户编辑时清空分组会被旧值回填，导致分组一旦设置便无法移除。
+        group: clean.group || undefined,
         apiKey: apiKeyCipher,
         updatedAt: now
       }
