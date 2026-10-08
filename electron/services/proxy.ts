@@ -123,9 +123,23 @@ function activeProvider(): { provider: Provider; apiKey: string; baseUrl: string
 
 // ---------------- 生命周期 ----------------
 
-export async function startProxy(portOverride?: number): Promise<OpResult<ProxyStatus>> {
-  await stopProxy()
-  const port = portOverride ?? cfg().port
+/**
+ * 启停串行化：startProxyNow 内部先 await 关闭旧实例再 listen，两次 configure（如快速开关、改端口）交错时，
+ * 后者可能在前者 listen 成功前就进入；两个 listen 竞争同一端口，失败方会把已在监听的实例引用冲掉，
+ * 留下一个状态显示“未运行”、却再也关不掉的孤儿服务。所有对外入口都排进同一条链。
+ */
+let lifecycle: Promise<unknown> = Promise.resolve()
+function serialLifecycle<T>(task: () => Promise<T>): Promise<T> {
+  const run = lifecycle.then(task, task)
+  lifecycle = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
+async function startProxyNow(port: number): Promise<OpResult<ProxyStatus>> {
+  await stopProxyNow()
   ensureToken()
   lastError = undefined
   return new Promise((resolve) => {
@@ -136,7 +150,7 @@ export async function startProxy(portOverride?: number): Promise<OpResult<ProxyS
       // lastError 为技术诊断串（英文，进 ProxyStatus.error/日志）；用户可见文案走消息码由前端 i18n 渲染
       const portInUse = e.code === 'EADDRINUSE'
       lastError = portInUse ? `Port ${port} is already in use` : e.message
-      server = null
+      if (server === srv) server = null
       log('error', 'proxy', `start failed: ${lastError}`)
       resolve({
         ok: false,
@@ -153,7 +167,13 @@ export async function startProxy(portOverride?: number): Promise<OpResult<ProxyS
   })
 }
 
-export async function stopProxy(): Promise<OpResult<ProxyStatus>> {
+export function stopProxy(): Promise<OpResult<ProxyStatus>> {
+  return serialLifecycle(stopProxyNow)
+}
+
+async function stopProxyNow(): Promise<OpResult<ProxyStatus>> {
+  // 上一次启动失败的诊断（如端口占用）只描述那次尝试；停用后仍挂在状态里会让“已停止”的网关显示报错
+  lastError = undefined
   if (server) {
     const s = server
     server = null
@@ -180,7 +200,11 @@ export async function stopProxy(): Promise<OpResult<ProxyStatus>> {
 }
 
 /** 应用配置：写入 store，并按 enabled 决定启停（端口变化会重启） */
-export async function configureProxy(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>> {
+export function configureProxy(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>> {
+  return serialLifecycle(() => configureProxyNow(patch))
+}
+
+async function configureProxyNow(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>> {
   // 渲染层入参不可信：非法值落盘后每次启动都会自启失败（字符串端口甚至会被 listen 当成命名管道），故按键白名单收口
   const p = patch ?? {}
   const clean: Partial<ProxyConfig> = {}
@@ -194,15 +218,17 @@ export async function configureProxy(patch: Partial<ProxyConfig>): Promise<OpRes
   if (next.enabled && server?.listening && prev.port === next.port) {
     return { ok: true, code: 'msg.proxy.started', args: { port: next.port }, data: proxyStatus() }
   }
-  if (next.enabled) return startProxy(next.port)
-  await stopProxy()
+  if (next.enabled) return startProxyNow(next.port)
+  await stopProxyNow()
   return { ok: true, code: 'msg.proxy.stopped', data: proxyStatus() }
 }
 
 /** app 启动时调用：仅在用户曾启用过时自动拉起 */
 export async function autoStartProxy(): Promise<void> {
-  const c = cfg()
-  if (c.enabled) await startProxy(c.port)
+  await serialLifecycle(async () => {
+    const c = cfg()
+    if (c.enabled) await startProxyNow(c.port)
+  })
 }
 
 // ---------------- 安全校验 ----------------
@@ -374,14 +400,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return
   }
 
+  // 入站即 Anthropic 路由时错误体也须是 Anthropic 形状，否则 Claude Code 等客户端只能报“无法解析响应”，看不到真实原因
+  const fmt: 'openai' | 'anthropic' = pathname.endsWith('/messages') ? 'anthropic' : 'openai'
+
   // API 路由需鉴权
-  if (!isAuthed(req, url)) return sendError(res, 401, 'invalid or missing access token', 'openai')
+  if (!isAuthed(req, url)) return sendError(res, 401, 'invalid or missing access token', fmt)
 
   const act = activeProvider()
   if (!act) {
     // 密钥不可用/解析失败 -> 502 + 非敏感文案；未选择供应商 -> 503
-    if (lastActiveError) return sendError(res, 502, lastActiveError, 'openai')
-    return sendError(res, 503, 'no target provider selected in CodeSwitch', 'openai')
+    if (lastActiveError) return sendError(res, 502, lastActiveError, fmt)
+    return sendError(res, 503, 'no target provider selected in CodeSwitch', fmt)
   }
 
   const ac = new AbortController()

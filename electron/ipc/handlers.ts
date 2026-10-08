@@ -1,7 +1,7 @@
 import { ipcMain, dialog, app, shell, BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import { store, mutate } from '../services/store'
+import { store, mutate, runExclusive } from '../services/store'
 import { scanIDEs, applyProvider, resetIDE, manualAdd, generateConfig, checkIdeRunning } from '../services/ideScanner'
 import { testProvider, isHttpUrl } from '../services/provider'
 import { listSnapshots, createSnapshot, applySnapshot, removeSnapshot, insertSnapshot } from '../services/snapshot'
@@ -197,8 +197,11 @@ function openPathAllowed(targetPath: string): boolean {
 export function registerIpc(): void {
   // ---- IDE ----
   safeHandleValue('ide:scan', () => scanIDEs())
-  safeHandle('ide:apply', (_e, ideId: string, providerId: string) => applyProvider(ideId, providerId))
-  safeHandle('ide:reset', async (_e, ideId: string) => {
+  // 写 IDE 配置 / ideBindings 的异步操作中途会 await 进程检测与 sql.js，必须与 provider:remove 等同队列串行：
+  // 否则删除供应商恰好落在 apply 的 await 间隙时，apply 随后仍会把已删除的 providerId 绑回去。
+  safeHandle('ide:apply', (_e, ideId: string, providerId: string) => runExclusive(() => applyProvider(ideId, providerId)))
+  safeHandle('ide:reset', (_e, ideId: string) => runExclusive(() => resetIdeOrAll(ideId)))
+  async function resetIdeOrAll(ideId: string): Promise<OpResult> {
     if (ideId !== 'all') return resetIDE(ideId)
     // 'all'：遍历各 IDE 调 resetIDE；resetIDE 对手动/辅助型返回 canceled=true（已跳过）。
     // 区分“成功/失败/跳过”，全部尝试均失败（无任何成功）时按失败返回，避免“恢复 0 个”被当作成功。
@@ -217,7 +220,7 @@ export function registerIpc(): void {
       return { ok: false, code: 'msg.ide.resetAllFailed', args: { failed } } satisfies OpResult
     }
     return { ok: true, code: 'msg.ide.resetAllDone', args: { count } } satisfies OpResult
-  })
+  }
   safeHandle('ide:manual-add', (_e, ideId: string, path: string) => manualAdd(ideId, path))
   safeHandleValue('ide:check-running', (_e, ideId: string) => checkIdeRunning(ideId))
   safeHandle('ide:generate-config', (_e, ideId: string, providerId: string) => generateConfig(ideId, providerId))
@@ -412,7 +415,7 @@ export function registerIpc(): void {
     if (d.length > SNAPSHOT_LIMITS.description) return fail('msg.provider.fieldTooLong', { max: SNAPSHOT_LIMITS.description }) satisfies OpResult
     return createSnapshot(n, d)
   })
-  safeHandle('snapshot:apply', (_e, id: string) => applySnapshot(id))
+  safeHandle('snapshot:apply', (_e, id: string) => runExclusive(() => applySnapshot(id)))
   safeHandle('snapshot:remove', (_e, id: string) => removeSnapshot(id))
 
   // 快照导出：写出 .csnap（JSON），内嵌该快照引用的供应商（含明文 Key），保证跨机可迁移
@@ -552,15 +555,17 @@ export function registerIpc(): void {
 
   // ---- Backup ----
   safeHandleValue('backup:list', (_e, ideId?: string) => listBackups(ideId))
-  safeHandle('backup:restore', async (_e, backupId: string) => {
-    // 与 apply/reset 同口径：整库/整文件回写前必须确认目标 IDE 已关闭，否则其退出时会用内存态覆盖恢复结果
-    const ideId = listBackups().find((b) => b.id === backupId)?.ideId
-    const ide = IDE_REGISTRY.find((d) => d.id === ideId)
-    if (ide && (await isIdeRunning(ide.processNames, true))) {
-      return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } } satisfies OpResult
-    }
-    return restoreBackup(backupId)
-  })
+  safeHandle('backup:restore', (_e, backupId: string) =>
+    runExclusive(async (): Promise<OpResult> => {
+      // 与 apply/reset 同口径：整库/整文件回写前必须确认目标 IDE 已关闭，否则其退出时会用内存态覆盖恢复结果
+      const ideId = listBackups().find((b) => b.id === backupId)?.ideId
+      const ide = IDE_REGISTRY.find((d) => d.id === ideId)
+      if (ide && (await isIdeRunning(ide.processNames, true))) {
+        return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } }
+      }
+      return restoreBackup(backupId)
+    })
+  )
   safeHandle('backup:remove', (_e, backupId: string) => removeBackup(backupId))
 
   // ---- Log ----

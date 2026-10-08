@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, Tray, Menu, ipcMain, nativeTheme } from 'ele
 // 必须最先执行：在 electron-store 实例化前重定向 userData（自定义数据目录）
 import './bootstrap'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { registerIpc } from '../ipc/handlers'
 import { IDE_REGISTRY } from '../adapters/registry'
 import { initLogger, log } from '../services/logger'
@@ -103,10 +104,9 @@ function createWindow(): void {
 
   // 阻止主窗口导航离开应用本体（渲染进程只跑本地打包资源 / dev server）。
   // 没有此守卫时，一个意外跳转就会把界面换成外部页面，同时失去 window.api 桥接。
+  // preload 会注入到窗口加载的任何页面，放行任意 file:// 等于把 window.api 交给任意本地 HTML，故只认应用入口本身。
   win.webContents.on('will-navigate', (e, url) => {
-    const self = process.env['ELECTRON_RENDERER_URL']
-    const allowed = self ? url.startsWith(self) : url.startsWith('file://') || url.startsWith('app://')
-    if (!allowed) {
+    if (!isAppEntryUrl(url)) {
       e.preventDefault()
       log('warn', 'will-navigate', `blocked navigation to ${url.slice(0, 120)}`)
     }
@@ -123,8 +123,31 @@ function createWindow(): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    win.loadFile(RENDERER_INDEX)
   }
+}
+
+const RENDERER_INDEX = path.join(__dirname, '../renderer/index.html')
+
+/** dev 按 origin 精确比对（前缀比对会放行 localhost:5173.evil.com 之类）；生产只认打包后的 index.html */
+function isAppEntryUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  const dev = process.env['ELECTRON_RENDERER_URL']
+  if (dev) {
+    try {
+      return u.origin === new URL(dev).origin
+    } catch {
+      return false
+    }
+  }
+  if (u.protocol !== 'file:') return false
+  const norm = (p: string): string => decodeURIComponent(p).toLowerCase()
+  return norm(u.pathname) === norm(pathToFileURL(RENDERER_INDEX).pathname)
 }
 
 // ---------------- 托盘本地化（Tina-H2） ----------------

@@ -95,7 +95,8 @@ export function openaiToAnthropicReq(body: any, fallbackModel: string): any {
   const msgs: any[] = []
   for (const m of messages) {
     const role = m.role
-    if (role === 'system') {
+    // developer 是 o1 起 OpenAI 对 system 的新名字，新版 SDK 默认发它；当成 user 会让系统指令变成用户发言
+    if (role === 'system' || role === 'developer') {
       systemParts.push(contentToText(m.content))
       continue
     }
@@ -299,6 +300,8 @@ export function anthropicStreamToOpenai(stream: SseStream, res: SseResponse, mod
   consumeSSE(
     stream,
     (d) => {
+      // 下游已结束后上游仍可能有残余事件到达；对已 end 的响应再 write 会抛 ERR_STREAM_WRITE_AFTER_END
+      if (res.writableEnded) return
       let ev: any
       try {
         ev = JSON.parse(d)
@@ -307,7 +310,7 @@ export function anthropicStreamToOpenai(stream: SseStream, res: SseResponse, mod
       }
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) {
         res.write(openaiChunk({ content: ev.delta.text }, model, id))
-      } else if (ev.type === 'message_delta' && ev.delta?.stop_reason && !res.writableEnded) {
+      } else if (ev.type === 'message_delta' && ev.delta?.stop_reason) {
         // OpenAI 客户端靠末块 finish_reason 判断截断（length）与正常结束（stop），不能只给 [DONE]
         res.write(openaiChunk({}, model, id, mapStop(ev.delta.stop_reason)))
       } else if (ev.type === 'message_stop') {
@@ -351,6 +354,7 @@ export function openaiStreamToAnthropic(stream: SseStream, res: SseResponse, mod
   consumeSSE(
     stream,
     (d) => {
+      if (done || res.writableEnded) return
       if (d === '[DONE]') return finish()
       let ev: any
       try {

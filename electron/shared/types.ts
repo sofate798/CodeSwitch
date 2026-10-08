@@ -55,7 +55,6 @@ export type MsgCode =
   | 'msg.snapshot.importOk'
   | 'msg.snapshot.importFailed'
   | 'msg.backup.restoreOk'
-  | 'msg.backup.restoreWarn'
   | 'msg.backup.restoreFailed'
   | 'msg.backup.restoreNotFound'
   | 'msg.backup.restoreNoTarget'

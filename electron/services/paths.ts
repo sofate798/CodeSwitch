@@ -26,8 +26,10 @@ function bootstrapFile(): string {
  * 关键：secure/ 必须搬运——里面是加密供应商 API Key 的主密钥（master.key）。
  * 若只搬 config.json 不搬主密钥，重启后新目录下 ensureMasterKey() 找不到旧密钥
  * 会“首次运行”式新生成一把，历史 enc2: 密文从此无法解密，所有 Key 只能重输。
+ * 'Local State' 同样必须搬运：Windows 上 safeStorage 产出的 v10 密文由该文件里的 os_crypt 密钥加密，
+ * master.key 是用它包裹的；新目录缺了它，Chromium 会另生成一把，master.key 随即无法解包。
  */
-const MIGRATE_ITEMS = ['config.json', 'backups', 'logs', 'secure']
+const MIGRATE_ITEMS = ['config.json', 'backups', 'logs', 'secure', 'Local State']
 
 function readBootstrap(): string | null {
   try {
@@ -76,7 +78,7 @@ export function getDataDirInfo(): { current: string; custom: string | null } {
 }
 
 /**
- * 迁移到新数据目录：把 config.json / backups / logs 复制到新目录并记录引导文件。
+ * 迁移到新数据目录：把 MIGRATE_ITEMS（配置、备份、日志、主密钥及其 Local State）复制到新目录并记录引导文件。
  * 不删除旧目录（保守，避免误删）；调用方应提示用户重启后生效。
  * 统一 OpResult 契约：对外只回消息码，异常细节仅落日志（与 handler 层的消息码渲染解耦）。
  */
