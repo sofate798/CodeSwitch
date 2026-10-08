@@ -14,20 +14,23 @@
   --scrollbar: #3a3d47;
 }
 
+/* 浅色主题：已校准文本/边框/次要文字在白底下的对比度（次要文字 >= AA 4.5:1）。
+   --text-primary / --text-secondary 同时作为图标 currentColor 继承源，
+   F2 移除图标硬编码色后，容器 color 在深/浅两主题下均能清晰呈现。 */
 html[data-theme="light"] {
   --bg-app: #f3f4f6;
   --bg-sidebar: #ffffff;
   --bg-card: #ffffff;
-  --bg-hover: #e9ebef;
-  --border: #e2e4e9;
-  --text-primary: #1f2329;
-  --text-secondary: #5f6672;
-  --accent: #3b82f6;
-  --accent-strong: #2563eb;
-  --success: #16a34a;
-  --warning: #d97706;
-  --danger: #dc2626;
-  --scrollbar: #c9cdd4;
+  --bg-hover: #e6e9ee;
+  --border: #d2d6dd;
+  --text-primary: #1a1d23;
+  --text-secondary: #4c5462;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --success: #15803d;
+  --warning: #b45309;
+  --danger: #b91c1c;
+  --scrollbar: #b6bcc6;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

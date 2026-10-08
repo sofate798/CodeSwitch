@@ -1,13 +1,13 @@
 import { store } from './store'
 import { applyProvider, resetIDE } from './ideScanner'
 import { log } from './logger'
-import type { Snapshot } from '../shared/types'
+import type { Snapshot, OpResult } from '../shared/types'
 
 export function listSnapshots(): Snapshot[] {
   return store.get('snapshots').sort((a, b) => b.createdAt - a.createdAt)
 }
 
-export function createSnapshot(name: string, description = ''): Snapshot {
+export function createSnapshot(name: string, description = ''): OpResult<Snapshot> {
   const bindings = store.get('ideBindings')
   const snap: Snapshot = {
     id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -22,40 +22,45 @@ export function createSnapshot(name: string, description = ''): Snapshot {
   list.push(snap)
   store.set('snapshots', list)
   log('info', 'snapshot-create', name)
-  return snap
+  return { ok: true, code: 'msg.snapshot.createOk', data: snap }
 }
 
-export async function applySnapshot(id: string): Promise<{ ok: boolean; message: string }> {
+export async function applySnapshot(id: string): Promise<OpResult> {
   const snap = store.get('snapshots').find((s) => s.id === id)
-  if (!snap) return { ok: false, message: '快照不存在' }
+  if (!snap) return { ok: false, args: { reason: '快照不存在' } }
   const errors: string[] = []
-  // 先全部重置，再按快照绑定应用（resetIDE 内部会安全跳过手动/辅助配置型 IDE）
+  let applied = 0
+  // 先全部重置：resetIDE 现返回 OpResult，canceled=true 表示跳过（manual/assist），不计失败
   for (const ideId of Object.keys(store.get('ideBindings'))) {
     const r = await resetIDE(ideId)
-    if (!r.ok && !r.skipped) errors.push(`${ideId}: ${r.message}`)
+    if (r.canceled) continue
+    if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'reset-failed'}`)
   }
+  // 再按快照绑定应用：不可写 IDE（notWritable / canceled）跳过，不计失败
   for (const [ideId, binding] of Object.entries(snap.ideBindings)) {
-    if (binding.providerId) {
-      const r = await applyProvider(ideId, binding.providerId)
-      if (!r.ok) errors.push(`${ideId}: ${r.message}`)
-    }
+    if (!binding.providerId) continue
+    const r = await applyProvider(ideId, binding.providerId)
+    if (r.canceled || r.code === 'msg.ide.notWritable') continue
+    if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'apply-failed'}`)
+    else applied++
   }
-  log('info', 'snapshot-apply', snap.name)
+  log('info', 'snapshot-apply', `${snap.name} applied=${applied}`)
   return errors.length === 0
-    ? { ok: true, message: `已应用快照「${snap.name}」` }
-    : { ok: false, message: `部分失败: ${errors.join('; ')}` }
+    ? { ok: true, code: 'msg.snapshot.applyOk', args: { name: snap.name, applied } }
+    : { ok: false, args: { reason: errors.join('; ') } }
 }
 
-export function removeSnapshot(id: string): void {
+export function removeSnapshot(id: string): OpResult {
   store.set('snapshots', store.get('snapshots').filter((s) => s.id !== id))
   log('info', 'snapshot-remove', id)
+  return { ok: true, code: 'msg.snapshot.removeOk' }
 }
 
 /**
  * 直接插入一个给定绑定关系的快照（用于 .csnap 导入，绑定已重映射到本机供应商 id）。
- * 名称与现有快照重复时自动追加后缀，避免混淆。
+ * 名称与现有快照重复时自动追加后缀，避免混淆。返回 msg.snapshot.importOk。
  */
-export function insertSnapshot(input: { name: string; description?: string; createdAt?: number; ideBindings: Record<string, { providerId: string | null }> }): Snapshot {
+export function insertSnapshot(input: { name: string; description?: string; createdAt?: number; ideBindings: Record<string, { providerId: string | null }> }): OpResult<Snapshot> {
   const list = store.get('snapshots')
   const names = new Set(list.map((s) => s.name))
   let name = input.name?.trim() || '导入的快照'
@@ -74,5 +79,5 @@ export function insertSnapshot(input: { name: string; description?: string; crea
   list.push(snap)
   store.set('snapshots', list)
   log('info', 'snapshot-import', name)
-  return snap
+  return { ok: true, code: 'msg.snapshot.importOk', data: snap }
 }

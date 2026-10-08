@@ -75,23 +75,38 @@ export async function readItem(
   }
 }
 
+/** 递归收集 JSON 对象中的所有键名（用于精确键匹配，H1） */
+function collectKeys(value: unknown, acc: Set<string> = new Set()): Set<string> {
+  if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      acc.add(k)
+      collectKeys(v, acc)
+    }
+  }
+  return acc
+}
+
 /**
- * 自适应探测：遍历表中所有行，找出 value 为 JSON 且包含任一特征键的行。
- * 用于 schema 未知 / 版本各异的 VS Code 分支（Trae/Kiro/Qoder/Windsurf）。
+ * 自适应探测（H1 收紧）：遍历表中所有行，仅当该行 value 为 JSON 对象，
+ * 且其真实键名「精确」同时命中 keyFeatures（apiKey 特征）与 urlFeatures（baseUrl 特征）时，
+ * 才视为凭证行——不再用序列化子串宽泛匹配，避免 baseurl/apikey 子串误命中无关行。
+ * 返回全部命中行；命中多行时由调用方决定是否报错让用户手选，本函数不默认取首个。
  */
 export async function probeItem(
   dbPath: string,
   table: string,
   keyCol: string,
   valCol: string,
-  contains: string[]
-): Promise<SqliteRow | null> {
-  if (!fs.existsSync(dbPath) || contains.length === 0) return null
+  keyFeatures: string[],
+  urlFeatures: string[]
+): Promise<SqliteRow[]> {
+  if (!fs.existsSync(dbPath) || keyFeatures.length === 0 || urlFeatures.length === 0) return []
   const db = await openDb(dbPath)
   try {
     const res = db.exec(`SELECT ${keyCol} AS k, ${valCol} AS v FROM ${table}`)
-    if (!res || res.length === 0) return null
+    if (!res || res.length === 0) return []
     const rows: any[][] = res[0].values
+    const matched: SqliteRow[] = []
     for (const [k, v] of rows) {
       const text = toText(v)
       if (!text) continue
@@ -102,12 +117,14 @@ export async function probeItem(
         continue
       }
       if (!parsed || typeof parsed !== 'object') continue
-      const flat = JSON.stringify(parsed).toLowerCase()
-      if (contains.some((c) => flat.includes(c.toLowerCase()))) {
-        return { rowKey: String(k), valueText: text, isBlob: v instanceof Uint8Array }
+      const keys = collectKeys(parsed)
+      const hasKey = keyFeatures.some((f) => keys.has(f))
+      const hasUrl = urlFeatures.some((f) => keys.has(f))
+      if (hasKey && hasUrl) {
+        matched.push({ rowKey: String(k), valueText: text, isBlob: v instanceof Uint8Array })
       }
     }
-    return null
+    return matched
   } finally {
     db.close()
   }
@@ -133,6 +150,7 @@ export async function writeItem(
     db = new SQL.Database()
     db.run(`CREATE TABLE IF NOT EXISTS ${table} (${keyCol} TEXT UNIQUE ON CONFLICT REPLACE, ${valCol} BLOB)`)
   }
+  const tmp = `${dbPath}.tmp-${process.pid}`
   try {
     const bindVal = isBlob ? new Uint8Array(Buffer.from(valueText, 'utf8')) : valueText
     db.run(
@@ -140,11 +158,24 @@ export async function writeItem(
       [rowKey, bindVal]
     )
     const data: Uint8Array = db.export()
-    const tmp = `${dbPath}.tmp-${process.pid}`
     fs.writeFileSync(tmp, Buffer.from(data))
     fs.renameSync(tmp, dbPath)
+    // H3：整库重写主库后删除残留的 -wal/-shm，避免 IDE 重开时回放旧 WAL 造成不一致或损坏
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        fs.rmSync(`${dbPath}${suffix}`, { force: true })
+      } catch {
+        // 附属文件删除失败不影响主库写入结果
+      }
+    }
   } finally {
     db.close()
+    // L1：失败时清理遗留临时文件（成功 rename 后 tmp 已不存在，此为空操作）
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
+    } catch {
+      // 清理失败忽略
+    }
   }
 }
 
@@ -157,13 +188,27 @@ export async function deleteItem(
 ): Promise<void> {
   if (!fs.existsSync(dbPath)) return
   const db = await openDb(dbPath)
+  const tmp = `${dbPath}.tmp-${process.pid}`
   try {
     db.run(`DELETE FROM ${table} WHERE ${keyCol} = ?`, [rowKey])
     const data: Uint8Array = db.export()
-    const tmp = `${dbPath}.tmp-${process.pid}`
     fs.writeFileSync(tmp, Buffer.from(data))
     fs.renameSync(tmp, dbPath)
+    // H3：整库重写后删除残留 -wal/-shm，避免回放不一致
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        fs.rmSync(`${dbPath}${suffix}`, { force: true })
+      } catch {
+        // 忽略
+      }
+    }
   } finally {
     db.close()
+    // L1：失败时清理遗留临时文件
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
+    } catch {
+      // 忽略
+    }
   }
 }

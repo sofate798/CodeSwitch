@@ -36,11 +36,16 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       valueColumn: 'value',
       rowKey: 'cursorAuth',
       valueFields: { apiKey: 'openAiApiKey', baseUrl: 'openAiBaseUrl' },
-      anthropicValueFields: { apiKey: 'anthropicOverrideApiKey' },
+      // C2：Anthropic 覆写必须同时落 apiKey + baseUrl + model，仅写 apiKey 会导致端点/模型缺失
+      anthropicValueFields: {
+        apiKey: 'anthropicOverrideApiKey',
+        baseUrl: 'anthropicOverrideBaseUrl',
+        model: 'anthropicOverrideModel'
+      },
       probeContains: ['openAiApiKey', 'anthropicOverrideApiKey', 'apiKey'],
       encryptSecret: true
     },
-    note: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 → 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。'
+    note: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。'
   },
   {
     id: 'windsurf',
@@ -96,7 +101,8 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     id: 'zed',
     name: 'Zed',
     icon: 'zed',
-    protocols: ['openai', 'anthropic'],
+    // C2：Zed settings.json 落点为 language_models.openai.*，无独立可靠的 anthropic 落点，仅保留 openai
+    protocols: ['openai'],
     homeMarkers: ['${APPDATA}\\Zed', '${USERPROFILE}\\.config\\zed'],
     configPaths: ['${APPDATA}\\Zed\\settings.json'],
     detectPaths: [
@@ -104,6 +110,8 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       'D:\\Program\\Zed\\Zed.exe',
       'C:\\Program Files\\Zed\\Zed.exe'
     ],
+    // M4：settings.json 整文件重写前需确认 Zed 已关闭，避免其退出时覆盖
+    processNames: ['Zed.exe'],
     storage: {
       kind: 'json',
       paths: ['${APPDATA}\\Zed\\settings.json'],
@@ -130,7 +138,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     processNames: ['Code.exe'],
     capability: 'assist',
     storage: { kind: 'json', paths: ['${APPDATA}\\Code\\User\\settings.json'], fields: {} },
-    note: 'Copilot 的 BYOK 密钥存于 VS Code 系统级密钥库（DPAPI），无法安全直写。可生成配置后在 VS Code Settings → Copilot → Models 手动粘贴。'
+    note: 'Copilot 的 BYOK 密钥存于 VS Code 系统级密钥库（DPAPI），无法安全直写。可生成配置后在 VS Code Settings > Copilot > Models 手动粘贴。'
   },
   {
     id: 'kiro',
@@ -214,7 +222,8 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     id: 'antigravity',
     name: 'Antigravity',
     icon: 'antigravity',
-    protocols: ['openai', 'anthropic'],
+    // C2：Antigravity config.json 落点为 openai.*，无独立可靠的 anthropic 落点，仅保留 openai
+    protocols: ['openai'],
     homeMarkers: ['${USERPROFILE}\\.antigravity_cockpit'],
     configPaths: ['${USERPROFILE}\\.antigravity_cockpit\\config.json'],
     detectPaths: [
@@ -264,6 +273,20 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
   }
 ]
 
-export function resolvePath(tpl: string): string {
-  return tpl.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] || '')
+/**
+ * 展开路径模板中的 ${ENV} 占位符。
+ * M9：任一占位符对应的环境变量缺失/为空时，整条路径判为无效并返回 null，
+ * 由调用方 filter 掉，避免替换成空串产生 "\..." 之类的畸形根相对路径。
+ */
+export function resolvePath(tpl: string): string | null {
+  let missing = false
+  const out = tpl.replace(/\$\{(\w+)\}/g, (_, name) => {
+    const v = process.env[name]
+    if (v == null || v === '') {
+      missing = true
+      return ''
+    }
+    return v
+  })
+  return missing ? null : out
 }

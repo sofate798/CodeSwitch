@@ -1,7 +1,9 @@
 import http from 'node:http'
+import { randomBytes } from 'node:crypto'
 import axios from 'axios'
 import { store } from './store'
 import { providerValues } from './provider'
+import { KeyUnavailableError } from './crypto'
 import {
   openaiToAnthropicReq,
   anthropicToOpenaiReq,
@@ -11,7 +13,7 @@ import {
   openaiStreamToAnthropic
 } from './proxyTranslate'
 import { log } from './logger'
-import type { Provider, ProxyConfig, ProxyStatus } from '../shared/types'
+import type { Provider, ProxyConfig, ProxyStatus, OpResult } from '../shared/types'
 
 /**
  * 本地转发网关（Local Forwarding Gateway）
@@ -26,8 +28,14 @@ import type { Provider, ProxyConfig, ProxyStatus } from '../shared/types'
  *    装一个免费的 OpenAI 兼容扩展（Cline/Continue/Roo）指向本网关即可用自定义供应商，
  *    不需要 Pro。
  *
+ * 安全（Alex-H4）：
+ *  - 本地随机 token 鉴权：启动时生成/读取，仅 CodeSwitch 内部与用户显式配置知晓；
+ *    API 路由要求 Authorization: Bearer <token> 或 x-codeswitch-token 头（或 ?token=）；
+ *  - CORS 由 * 收紧为回显受控 Origin（仅本机来源），并处理预检；
+ *  - 校验 Host/Origin 防 DNS rebinding（仅接受 127.0.0.1 / localhost / ::1）。
+ *
  * 入站路由：
- *  - GET  /health                健康检查
+ *  - GET  /health                健康检查（无需 token，仅返回存活信息）
  *  - GET  /v1/models | /models   模型列表（OpenAI 供应商透传，否则合成当前模型）
  *  - POST /v1/chat/completions   OpenAI 入站
  *  - POST /v1/messages           Anthropic 入站
@@ -35,6 +43,11 @@ import type { Provider, ProxyConfig, ProxyStatus } from '../shared/types'
 
 let server: http.Server | null = null
 let lastError: string | undefined
+/** activeProvider 解析失败（如密钥不可用）时的非敏感原因，供 handle 返回受控错误 */
+let lastActiveError: string | undefined
+
+/** 受控主机名（防 DNS rebinding） */
+const ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '::1', '[::1]']
 
 function cfg(): ProxyConfig {
   const c = store.get('proxy') as Partial<ProxyConfig> | undefined
@@ -43,6 +56,21 @@ function cfg(): ProxyConfig {
     port: c?.port ?? 8787,
     providerId: c?.providerId ?? null
   }
+}
+
+/** 读取/生成本地网关鉴权 token（Alex-H4）。首次调用时随机生成并持久化。 */
+function ensureToken(): string {
+  let t = store.get('proxyToken')
+  if (!t) {
+    t = randomBytes(32).toString('hex')
+    store.set('proxyToken', t)
+  }
+  return t
+}
+
+/** 供上层（B4 handler / 前端配置引导）获取当前 token，用于用户显式配置客户端 */
+export function getProxyToken(): string {
+  return ensureToken()
 }
 
 export function proxyUrl(port = cfg().port): string {
@@ -63,21 +91,42 @@ export function proxyStatus(): ProxyStatus {
   }
 }
 
-/** 当前生效的转发目标（解密后的三要素） */
+/** 当前生效的转发目标（解密后的三要素）。
+ * 密钥不可用（KeyUnavailableError）或解密失败时返回 null，并在 lastActiveError 记录非敏感原因，
+ * 绝不向上抛出异常、绝不回显明文 Key（Alex 对接要求）。 */
 function activeProvider(): { provider: Provider; apiKey: string; baseUrl: string; model: string } | null {
   const c = cfg()
-  if (!c.providerId) return null
+  if (!c.providerId) {
+    lastActiveError = undefined
+    return null
+  }
   const provider = (store.get('providers') as Provider[]).find((p) => p.id === c.providerId)
-  if (!provider) return null
-  const v = providerValues(provider)
-  return { provider, ...v }
+  if (!provider) {
+    lastActiveError = undefined
+    return null
+  }
+  try {
+    // 网关转发无特定 ideId，providerValues 走默认 baseUrl 归一化
+    const v = providerValues(provider)
+    lastActiveError = undefined
+    return { provider, ...v }
+  } catch (e) {
+    const keyUnavailable = e instanceof KeyUnavailableError || (e as Error)?.name === 'KeyUnavailableError'
+    lastActiveError = keyUnavailable
+      ? '目标供应商密钥不可用，请在 CodeSwitch 中重新输入该供应商的 API Key'
+      : '目标供应商配置解析失败，请检查其配置'
+    // 仅记录 provider id 与非敏感原因，绝不记录明文 Key
+    log('error', 'proxy', `activeProvider failed for ${provider.id}: ${keyUnavailable ? 'key unavailable' : 'decrypt/parse error'}`)
+    return null
+  }
 }
 
 // ---------------- 生命周期 ----------------
 
-export async function startProxy(portOverride?: number): Promise<ProxyStatus> {
+export async function startProxy(portOverride?: number): Promise<OpResult<ProxyStatus>> {
   await stopProxy()
   const port = portOverride ?? cfg().port
+  ensureToken()
   lastError = undefined
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
@@ -87,37 +136,80 @@ export async function startProxy(portOverride?: number): Promise<ProxyStatus> {
       lastError = e.code === 'EADDRINUSE' ? `端口 ${port} 已被占用` : e.message
       server = null
       log('error', 'proxy', `start failed: ${lastError}`)
-      resolve(proxyStatus())
+      resolve({ ok: false, code: 'msg.proxy.error', args: { reason: lastError }, data: proxyStatus() })
     })
     srv.listen(port, '127.0.0.1', () => {
       server = srv
       log('info', 'proxy', `listening on ${proxyUrl(port)}`)
-      resolve(proxyStatus())
+      resolve({ ok: true, code: 'msg.proxy.started', args: { port }, data: proxyStatus() })
     })
   })
 }
 
-export async function stopProxy(): Promise<void> {
+export async function stopProxy(): Promise<OpResult<ProxyStatus>> {
   if (server) {
     const s = server
     server = null
     await new Promise<void>((r) => s.close(() => r()))
   }
+  return { ok: true, code: 'msg.proxy.stopped', data: proxyStatus() }
 }
 
 /** 应用配置：写入 store，并按 enabled 决定启停（端口变化会重启） */
-export async function configureProxy(patch: Partial<ProxyConfig>): Promise<ProxyStatus> {
+export async function configureProxy(patch: Partial<ProxyConfig>): Promise<OpResult<ProxyStatus>> {
   const next: ProxyConfig = { ...cfg(), ...patch }
   store.set('proxy', next)
   if (next.enabled) return startProxy(next.port)
   await stopProxy()
-  return proxyStatus()
+  return { ok: true, code: 'msg.proxy.stopped', data: proxyStatus() }
 }
 
 /** app 启动时调用：仅在用户曾启用过时自动拉起 */
 export async function autoStartProxy(): Promise<void> {
   const c = cfg()
   if (c.enabled) await startProxy(c.port)
+}
+
+// ---------------- 安全校验 ----------------
+
+/** Host 校验：防 DNS rebinding，仅接受本机 Host */
+function hostAllowed(req: http.IncomingMessage): boolean {
+  const host = req.headers.host
+  if (!host) return true // 部分本地客户端省略 Host
+  const hostname = host.replace(/:\d+$/, '')
+  return ALLOWED_HOSTS.includes(hostname) || ALLOWED_HOSTS.includes(host)
+}
+
+/** Origin 校验：仅接受本机来源，用于回显受控 CORS Origin */
+function originAllowed(origin: string): boolean {
+  try {
+    const u = new URL(origin)
+    return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(u.hostname)
+  } catch {
+    return false
+  }
+}
+
+function applyCors(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const origin = req.headers.origin
+  if (typeof origin === 'string' && originAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+  }
+  // 不受控 Origin 不回显，浏览器侧即视为跨域被拒
+}
+
+/** token 鉴权：Bearer / x-codeswitch-token / ?token= 三种携带方式 */
+function isAuthed(req: http.IncomingMessage, url: URL | null): boolean {
+  const token = store.get('proxyToken')
+  if (!token) return true // 理论上启动时已生成；无 token 时不阻断
+  const auth = req.headers['authorization']
+  if (typeof auth === 'string' && auth.startsWith('Bearer ') && auth.slice(7).trim() === token) return true
+  const x = req.headers['x-codeswitch-token']
+  if (typeof x === 'string' && x === token) return true
+  if (url && url.searchParams.get('token') === token) return true
+  return false
 }
 
 // ---------------- 请求处理 ----------------
@@ -138,37 +230,81 @@ function readBody(req: http.IncomingMessage): Promise<any> {
   })
 }
 
+/**
+ * Alex-M7：客户端断开时主动 abort 上游请求。
+ * 监听下游 res 'close'（未完成即断开）与 req 'aborted'/'error'，触发 AbortController，
+ * axios 收到 signal 会断开上游连接、销毁流，SSE 转换随之结束，避免无谓 token/连接消耗。
+ */
+function wireAbort(req: http.IncomingMessage, res: http.ServerResponse, ac: AbortController): void {
+  const abort = (): void => {
+    if (!ac.signal.aborted) ac.abort()
+  }
+  res.on('close', () => {
+    if (!res.writableEnded) abort()
+  })
+  req.on('aborted', abort)
+  req.on('error', abort)
+}
+
 async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const url = (req.url || '/').split('?')[0]
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  // 防 DNS rebinding：非法 Host 直接拒绝
+  if (!hostAllowed(req)) {
+    res.statusCode = 403
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ error: { message: 'forbidden host', type: 'api_error', code: 403 } }))
+    return
+  }
+  applyCors(req, res)
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Headers', '*')
+    res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-codeswitch-token, anthropic-version')
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    res.setHeader('Access-Control-Max-Age', '86400')
     res.statusCode = 204
     res.end()
     return
   }
-  if (url === '/health' || url === '/') {
+
+  let url: URL | null = null
+  try {
+    url = new URL(req.url || '/', proxyUrl())
+  } catch {
+    url = null
+  }
+  const pathname = url ? url.pathname : (req.url || '/').split('?')[0]
+
+  // 健康检查：无需 token，仅返回存活信息（不泄露供应商等敏感状态）
+  if (pathname === '/health' || pathname === '/') {
     res.setHeader('content-type', 'application/json')
-    res.end(JSON.stringify({ ok: true, app: 'CodeSwitch Gateway', ...proxyStatus() }))
+    res.end(JSON.stringify({ ok: true, app: 'CodeSwitch Gateway', running: !!server?.listening }))
     return
   }
 
-  const act = activeProvider()
-  if (!act) return sendError(res, 503, '未选择转发目标供应商', 'openai')
+  // API 路由需鉴权
+  if (!isAuthed(req, url)) return sendError(res, 401, '无效或缺失的访问令牌', 'openai')
 
-  if (url.endsWith('/models')) return handleModels(act, res)
-  if (url.endsWith('/chat/completions')) return handleChatCompletions(act, req, res)
-  if (url.endsWith('/messages')) return handleMessages(act, req, res)
-  return sendError(res, 404, `未知路由: ${url}`, 'openai')
+  const act = activeProvider()
+  if (!act) {
+    // 密钥不可用/解析失败 -> 502 + 非敏感文案；未选择供应商 -> 503
+    if (lastActiveError) return sendError(res, 502, lastActiveError, 'openai')
+    return sendError(res, 503, '未选择转发目标供应商', 'openai')
+  }
+
+  const ac = new AbortController()
+  wireAbort(req, res, ac)
+
+  if (pathname.endsWith('/models')) return handleModels(act, res, ac.signal)
+  if (pathname.endsWith('/chat/completions')) return handleChatCompletions(act, req, res, ac.signal)
+  if (pathname.endsWith('/messages')) return handleMessages(act, req, res, ac.signal)
+  return sendError(res, 404, `未知路由: ${pathname}`, 'openai')
 }
 
-async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>, res: http.ServerResponse): Promise<void> {
+async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
   if (act.provider.protocol === 'openai') {
     try {
       const r = await axios.get(`${act.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${act.apiKey}` },
         timeout: 10000,
+        signal,
         validateStatus: () => true
       })
       if (r.status < 300) {
@@ -178,9 +314,10 @@ async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>,
         return
       }
     } catch {
-      // 降级为合成列表
+      // 降级为合成列表（含被 abort 的情况）
     }
   }
+  if (res.writableEnded) return
   const body = {
     object: 'list',
     data: [{ id: act.model, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'codeswitch' }]
@@ -189,13 +326,13 @@ async function handleModels(act: NonNullable<ReturnType<typeof activeProvider>>,
   res.end(JSON.stringify(body))
 }
 
-async function handleChatCompletions(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleChatCompletions(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
   const body = await readBody(req)
   if (!body.model) body.model = act.model
   const stream = !!body.stream
   try {
     if (act.provider.protocol === 'openai') {
-      return await passThrough(`${act.baseUrl}/chat/completions`, { Authorization: `Bearer ${act.apiKey}` }, body, res)
+      return await passThrough(`${act.baseUrl}/chat/completions`, { Authorization: `Bearer ${act.apiKey}` }, body, res, signal)
     }
     // OpenAI 入站 → Anthropic 供应商
     const anthReq = openaiToAnthropicReq(body, act.model)
@@ -203,6 +340,7 @@ async function handleChatCompletions(act: NonNullable<ReturnType<typeof activePr
       headers: { 'content-type': 'application/json', 'x-api-key': act.apiKey, 'anthropic-version': '2023-06-01' },
       responseType: stream ? 'stream' : 'json',
       timeout: 0,
+      signal,
       validateStatus: () => true
     })
     if (r.status >= 300) return await relayError(res, r, 'openai')
@@ -213,17 +351,18 @@ async function handleChatCompletions(act: NonNullable<ReturnType<typeof activePr
     }
     return anthropicStreamToOpenai(r.data, res, act.model)
   } catch (e) {
+    if (signal.aborted || res.writableEnded) return
     return sendError(res, 502, (e as Error).message, 'openai')
   }
 }
 
-async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>>, req: http.IncomingMessage, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
   const body = await readBody(req)
   if (!body.model) body.model = act.model
   const stream = !!body.stream
   try {
     if (act.provider.protocol === 'anthropic') {
-      return await passThrough(`${act.baseUrl}/v1/messages`, { 'x-api-key': act.apiKey, 'anthropic-version': '2023-06-01' }, body, res)
+      return await passThrough(`${act.baseUrl}/v1/messages`, { 'x-api-key': act.apiKey, 'anthropic-version': '2023-06-01' }, body, res, signal)
     }
     // Anthropic 入站 → OpenAI 供应商
     const oReq = anthropicToOpenaiReq(body, act.model)
@@ -231,6 +370,7 @@ async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${act.apiKey}` },
       responseType: stream ? 'stream' : 'json',
       timeout: 0,
+      signal,
       validateStatus: () => true
     })
     if (r.status >= 300) return await relayError(res, r, 'anthropic')
@@ -241,18 +381,29 @@ async function handleMessages(act: NonNullable<ReturnType<typeof activeProvider>
     }
     return openaiStreamToAnthropic(r.data, res, act.model)
   } catch (e) {
+    if (signal.aborted || res.writableEnded) return
     return sendError(res, 502, (e as Error).message, 'anthropic')
   }
 }
 
-/** 同协议透传：直接管道上游响应（流式/非流式统一处理） */
-async function passThrough(url: string, headers: Record<string, string>, body: any, res: http.ServerResponse): Promise<void> {
+/** 同协议透传：直接管道上游响应（流式/非流式统一处理）；signal 用于客户端断开时中止上游 */
+async function passThrough(url: string, headers: Record<string, string>, body: any, res: http.ServerResponse, signal: AbortSignal): Promise<void> {
   const r = await axios.post(url, body, {
     headers: { 'content-type': 'application/json', ...headers },
     responseType: 'stream',
     timeout: 0,
+    signal,
     validateStatus: () => true
   })
+  if (res.writableEnded) {
+    // 客户端已断开，销毁上游流避免继续消耗
+    try {
+      r.data.destroy?.()
+    } catch {
+      // ignore
+    }
+    return
+  }
   res.statusCode = r.status
   const ct = r.headers['content-type']
   if (ct) res.setHeader('content-type', Array.isArray(ct) ? ct.join(', ') : String(ct))

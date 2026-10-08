@@ -18,7 +18,6 @@ contextBridge.exposeInMainWorld('api', {
     save: (p: any) => ipcInvoke('provider:save', p),
     remove: (id: string) => ipcInvoke('provider:remove', id),
     test: (id: string) => ipcInvoke('provider:test', id),
-    revealKey: (id: string) => ipcInvoke('provider:reveal-key', id),
     export: () => ipcInvoke('provider:export'),
     import: () => ipcInvoke('provider:import')
   },
@@ -46,13 +45,15 @@ contextBridge.exposeInMainWorld('api', {
   },
   proxy: {
     status: () => ipcInvoke('proxy:status'),
-    configure: (patch: any) => ipcInvoke('proxy:configure', patch)
+    configure: (patch: any) => ipcInvoke('proxy:configure', patch),
+    token: () => ipcInvoke('proxy:token')
   },
   system: {
     pickFile: (defaultPath?: string) => ipcInvoke('system:pick-file', defaultPath),
     openDataDir: () => ipcInvoke('system:open-data-dir'),
     openPath: (targetPath: string) => ipcInvoke('system:open-path', targetPath),
     checkUpdate: () => ipcInvoke('system:check-update'),
+    installUpdate: () => ipcInvoke('system:install-update'),
     getDataDir: () => ipcInvoke('system:get-data-dir'),
     setDataDir: () => ipcInvoke('system:set-data-dir'),
     resetAll: () => ipcInvoke('system:reset-all'),

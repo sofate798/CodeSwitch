@@ -14,7 +14,9 @@ export const i18n = createI18n({
   }
 })
 
-export function setLocale(locale: 'zh-CN' | 'en-US') {
-  i18n.global.locale.value = locale
+// 首屏可用 localStorage('cs-locale') 回退；F1 store 在 refreshSettings 后调用 setLocale
+// 以后端 settings.locale 覆盖，作为语言的单一数据源。
+export function setLocale(locale: string): void {
+  i18n.global.locale.value = locale as 'zh-CN' | 'en-US'
   localStorage.setItem('cs-locale', locale)
 }

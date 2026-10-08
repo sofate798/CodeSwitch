@@ -1,4 +1,4 @@
-export default {
+module.exports = {
   app: { name: 'CodeSwitch' },
   nav: {
     home: 'IDE 管理',
@@ -60,10 +60,7 @@ export default {
     generateHint: '复制以下内容，按提示粘贴到目标 IDE 的设置中：',
     copy: '复制',
     copied: '已复制到剪贴板',
-    copyFailed: '复制失败',
     openFolder: '打开所在目录',
-    empty: '未探测到已安装的 IDE',
-    emptyHint: '点击右上角刷新重新扫描',
     status: {
       customized: '已自定义',
       default: '默认',
@@ -97,13 +94,23 @@ export default {
     exportBtn: '导出',
     importDone: '导入 {count} 个供应商',
     exportDone: '已导出 {count} 个供应商',
-    saved: '保存成功',
+    preset: '快速填充',
+    presetPlaceholder: '选择常用供应商预设（自动填入 Base URL / Model）',
     validation: {
       name: '请填写名称',
       baseUrl: '请填写 Base URL',
       model: '请填写 Model',
       apiKey: '请填写 API Key'
     }
+  },
+  presets: {
+    openai: 'OpenAI 官方',
+    deepseek: 'DeepSeek',
+    openrouter: 'OpenRouter',
+    qwen: '阿里云百炼（通义）',
+    zhipu: '智谱 AI',
+    moonshot: 'Moonshot（月之暗面）',
+    anthropic: 'Anthropic 官方'
   },
   snapshots: {
     title: '快照管理',
@@ -117,7 +124,6 @@ export default {
     ideCount: '{count} 个 IDE',
     nameRequired: '请填写快照名称',
     applySuccess: '已应用快照「{name}」',
-    appliedConfirm: '快照已应用，{count} 个 IDE 已更新',
     applyFailed: '部分失败: {errors}',
     importBtn: '导入',
     exportBtn: '导出',
@@ -203,78 +209,6 @@ export default {
   tray: {
     show: '显示主窗口',
     quit: '退出 CodeSwitch'
-  },
-  msg: {
-    common: {
-      canceled: '已取消',
-      error: '操作失败',
-      ok: '操作成功'
-    },
-    ide: {
-      applyDone: '已应用到 {name}',
-      applyNeedRestart: '配置已写入，重启 IDE 后生效',
-      resetDone: '已恢复 {name} 为官方默认',
-      resetAllDone: '已恢复 {count} 个 IDE 为官方默认',
-      notFound: '未找到该 IDE',
-      notWritable: '该 IDE 不支持自动写入',
-      needClose: '请先关闭 {name} 后重试',
-      parseError: '配置文件解析失败',
-      configInvalid: '配置文件无效',
-      pathInvalid: '配置路径无效',
-      manualAddOk: '已保存手动指定的配置路径',
-      incompatibleProtocol: '{ide} 不支持 {protocol} 协议',
-      rowAmbiguous: '配置存储中存在多个候选项，无法确定写入位置'
-    },
-    provider: {
-      saveOk: '供应商已保存',
-      removeOk: '供应商已删除',
-      missingFields: '请填写必要字段',
-      testOk: '连接成功（{latencyMs}ms）',
-      testTimeout: '连接超时',
-      testAuthFailed: '鉴权失败，请检查 API Key',
-      testBadUrl: 'Base URL 无效',
-      testNetErr: '网络连接失败',
-      testHttpErr: '请求失败（HTTP {status}）',
-      keyUnavailable: 'API Key 不可用',
-      exportOk: '供应商已导出',
-      importOk: '已导入 {count} 个供应商',
-      importFailed: '导入失败，文件格式无效',
-      notFound: '未找到该供应商'
-    },
-    snapshot: {
-      createOk: '快照已创建',
-      applyOk: '快照已应用',
-      removeOk: '快照已删除',
-      exportOk: '快照已导出',
-      importOk: '已导入快照「{name}」（{count} 个供应商）',
-      importFailed: '导入失败，快照文件无效'
-    },
-    backup: {
-      restoreOk: '备份已恢复',
-      restoreFailed: '恢复失败',
-      removeOk: '备份已删除'
-    },
-    log: {
-      clearOk: '日志已清空',
-      exportOk: '日志已导出'
-    },
-    settings: {
-      saveOk: '设置已保存',
-      dataDirChanged: '数据目录已更改',
-      resetDone: '已重置全部数据',
-      relaunchNeeded: '需要重启后生效'
-    },
-    proxy: {
-      started: '网关已启动（端口 {port}）',
-      stopped: '网关已停止',
-      error: '网关启动失败'
-    },
-    update: {
-      available: '发现新版本：{version}',
-      notAvailable: '已是最新版本',
-      downloaded: '更新已下载，重启后自动安装',
-      noFeed: '未配置更新源',
-      error: '检查更新失败'
-    }
   }
 }
+

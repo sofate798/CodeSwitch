@@ -16,9 +16,19 @@ export function encryptionAvailable(): boolean {
   }
 }
 
-/** base64 形态启发：DPAPI/safeStorage 密文以文本存储时通常是纯 base64 */
+/**
+ * base64 形态启发：DPAPI/safeStorage 密文以文本存储时是「带填充的标准 base64」，
+ * 且长度较长、必为 4 的倍数。收紧判据以修正 L5——避免把恰好是纯 base64 字母表的
+ * 明文 token（无 enc 前缀特征、长度非 4 的倍数或过短）误判为需 safeStorage 解密的密文。
+ * 真正的 safeStorage 密文仍会命中；误判时 tryDecryptSecret 的 try/catch 亦会回退为明文。
+ */
+const MIN_CIPHER_LEN = 32
 function isBase64ish(s: string): boolean {
-  return typeof s === 'string' && s.length >= 24 && /^[A-Za-z0-9+/]+={0,2}$/.test(s)
+  if (typeof s !== 'string') return false
+  // 过短或非 4 的倍数：几乎不可能是标准 base64 密文，多为明文 token
+  if (s.length < MIN_CIPHER_LEN || s.length % 4 !== 0) return false
+  // 仅允许标准 base64 字母表，'=' 只能出现在末尾（至多两个）
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(s)
 }
 
 /**

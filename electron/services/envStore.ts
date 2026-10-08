@@ -51,8 +51,17 @@ export function writeEnvAtomic(file: string, updates: Record<string, string>): v
   let text = next.join('\n')
   if (!text.endsWith('\n')) text += '\n'
   const tmp = `${file}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, text, 'utf8')
-  fs.renameSync(tmp, file)
+  try {
+    fs.writeFileSync(tmp, text, 'utf8')
+    fs.renameSync(tmp, file)
+  } finally {
+    // L1：失败时清理遗留临时文件（成功 rename 后 tmp 已不存在，此为空操作）
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
+    } catch {
+      // 清理失败忽略
+    }
+  }
 }
 
 /** 删除若干键所在行（恢复默认时用） */
@@ -66,6 +75,15 @@ export function removeEnvKeys(file: string, keys: string[]): void {
   let text = lines.join('\n')
   if (text && !text.endsWith('\n')) text += '\n'
   const tmp = `${file}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, text, 'utf8')
-  fs.renameSync(tmp, file)
+  try {
+    fs.writeFileSync(tmp, text, 'utf8')
+    fs.renameSync(tmp, file)
+  } finally {
+    // L1：失败时清理遗留临时文件
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
+    } catch {
+      // 忽略
+    }
+  }
 }

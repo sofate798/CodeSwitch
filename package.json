@@ -1,5 +1,6 @@
 {
   "name": "codeswitch",
+  "productName": "CodeSwitch",
   "version": "1.1.0",
   "description": "一个按钮，切换你的 AI 大脑 - 统一管理多个 AI IDE 的供应商配置",
   "main": "out/main/index.js",

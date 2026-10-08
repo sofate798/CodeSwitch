@@ -6,6 +6,11 @@ import { parse, stringify } from 'smol-toml'
  * TOML 配置读写（如 Codex ~/.codex/config.toml）。
  * parse -> 修改 -> stringify -> 原子写回。
  * 注意：round-trip 会丢失注释/原始排版，因此写入前必定先自动备份。
+ *
+ * M5 取舍说明：理想方案是对 config.toml 做最小化行级增删以完整保留用户注释与排版，
+ * 但任意 TOML 的行级定位（多行字符串、内联表、重复表段、数组表）实现风险高、易引入语法错误，
+ * 反而可能破坏用户配置。故此处维持「整体 parse/stringify 重写」，依赖 apply/reset 前的自动备份兜底，
+ * 用户可从备份一键还原注释与排版。此为经权衡后的刻意选择。
  */
 
 export function readToml(file: string): Record<string, any> {
@@ -18,8 +23,17 @@ export function readToml(file: string): Record<string, any> {
 export function writeTomlAtomic(file: string, data: Record<string, any>): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const tmp = `${file}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, stringify(data), 'utf8')
-  fs.renameSync(tmp, file)
+  try {
+    fs.writeFileSync(tmp, stringify(data), 'utf8')
+    fs.renameSync(tmp, file)
+  } finally {
+    // L1：失败时清理遗留临时文件（成功 rename 后 tmp 已不存在，此为空操作）
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { force: true })
+    } catch {
+      // 清理失败忽略
+    }
+  }
 }
 
 /** 在对象上按路径设置嵌套表段，如 ['model_providers','codeswitch'] -> { model_providers: { codeswitch: {...} } } */

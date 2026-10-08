@@ -60,7 +60,10 @@ export default {
     generateHint: 'Copy the content below and paste it into the target IDE settings as instructed:',
     copy: 'Copy',
     copied: 'Copied to clipboard',
+    copyFailed: 'Copy failed',
     openFolder: 'Open Folder',
+    empty: 'No installed IDEs detected',
+    emptyHint: 'Click Refresh in the top-right corner to rescan',
     status: {
       customized: 'Customized',
       default: 'Default',
@@ -94,23 +97,13 @@ export default {
     exportBtn: 'Export',
     importDone: 'Imported {count} providers',
     exportDone: 'Exported {count} providers',
-    preset: 'Quick Fill',
-    presetPlaceholder: 'Pick a common provider preset (auto-fills Base URL / Model)',
+    saved: 'Saved',
     validation: {
       name: 'Please enter a name',
       baseUrl: 'Please enter the Base URL',
       model: 'Please enter the model',
       apiKey: 'Please enter the API Key'
     }
-  },
-  presets: {
-    openai: 'OpenAI Official',
-    deepseek: 'DeepSeek',
-    openrouter: 'OpenRouter',
-    qwen: 'Alibaba Bailian (Qwen)',
-    zhipu: 'Zhipu AI',
-    moonshot: 'Moonshot',
-    anthropic: 'Anthropic Official'
   },
   snapshots: {
     title: 'Snapshot Management',
@@ -124,6 +117,7 @@ export default {
     ideCount: '{count} IDEs',
     nameRequired: 'Please enter a snapshot name',
     applySuccess: "Snapshot '{name}' applied",
+    appliedConfirm: 'Snapshot applied. {count} IDEs updated',
     applyFailed: 'Partial failure: {errors}',
     importBtn: 'Import',
     exportBtn: 'Export',
@@ -209,5 +203,78 @@ export default {
   tray: {
     show: 'Show Window',
     quit: 'Quit CodeSwitch'
+  },
+  msg: {
+    common: {
+      canceled: 'Canceled',
+      error: 'Operation failed',
+      ok: 'Done'
+    },
+    ide: {
+      applyDone: 'Applied to {name}',
+      applyNeedRestart: 'Config written. Restart the IDE to take effect',
+      resetDone: 'Reset {name} to official defaults',
+      resetAllDone: 'Reset {count} IDEs to official defaults',
+      notFound: 'IDE not found',
+      notWritable: 'This IDE does not support auto-write',
+      needClose: 'Close {name} and try again',
+      parseError: 'Failed to parse config file',
+      configInvalid: 'Invalid config file',
+      pathInvalid: 'Invalid config path',
+      manualAddOk: 'Config path saved',
+      incompatibleProtocol: '{ide} does not support the {protocol} protocol',
+      rowAmbiguous: 'Multiple candidate entries found; unable to determine the write target'
+    },
+    provider: {
+      saveOk: 'Provider saved',
+      removeOk: 'Provider deleted',
+      missingFields: 'Please fill in the required fields',
+      testOk: 'Connection OK ({latencyMs}ms)',
+      testTimeout: 'Connection timed out',
+      testAuthFailed: 'Authentication failed. Check the API Key',
+      testBadUrl: 'Invalid Base URL',
+      testNetErr: 'Network connection failed',
+      testHttpErr: 'Request failed (HTTP {status})',
+      keyUnavailable: 'API Key unavailable',
+      exportOk: 'Providers exported',
+      importOk: 'Imported {count} providers',
+      importFailed: 'Import failed. Invalid file format',
+      notFound: 'Provider not found'
+    },
+    snapshot: {
+      createOk: 'Snapshot created',
+      applyOk: 'Snapshot applied',
+      removeOk: 'Snapshot deleted',
+      exportOk: 'Snapshot exported',
+      importOk: "Imported snapshot '{name}' ({count} providers)",
+      importFailed: 'Import failed. Invalid snapshot file'
+    },
+    backup: {
+      restoreOk: 'Backup restored',
+      restoreFailed: 'Restore failed',
+      removeOk: 'Backup deleted'
+    },
+    log: {
+      clearOk: 'Logs cleared',
+      exportOk: 'Logs exported'
+    },
+    settings: {
+      saveOk: 'Settings saved',
+      dataDirChanged: 'Data directory changed',
+      resetDone: 'All data has been reset',
+      relaunchNeeded: 'Restart required to take effect'
+    },
+    proxy: {
+      started: 'Gateway started (port {port})',
+      stopped: 'Gateway stopped',
+      error: 'Failed to start gateway'
+    },
+    update: {
+      available: 'Update available: {version}',
+      notAvailable: 'You are up to date',
+      downloaded: 'Update downloaded. It will install on restart',
+      noFeed: 'No update feed configured',
+      error: 'Failed to check for updates'
+    }
   }
 }

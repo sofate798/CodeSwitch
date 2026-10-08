@@ -3,11 +3,12 @@ import { IDE_REGISTRY, resolvePath } from '../adapters/registry'
 import { store } from './store'
 import { backupFile, readJsonSafe, writeJsonAtomic, restoreBackup } from './backup'
 import { providerValues, applyFieldsToConfig, setPath, getPath, unsetPath } from './provider'
-import { readItem, probeItem, writeItem } from './sqliteStore'
+import { readItem, probeItem, writeItem, type SqliteRow } from './sqliteStore'
 import { tryDecryptSecret, encryptSecret } from './secureValue'
 import { readToml, writeTomlAtomic, ensureTable, removeTable } from './tomlStore'
 import { readEnv, writeEnvAtomic, removeEnvKeys } from './envStore'
 import { isIdeRunning } from './processGuard'
+import { KeyUnavailableError } from './crypto'
 import { log } from './logger'
 import type {
   IDEAdapterDef,
@@ -16,25 +17,20 @@ import type {
   IDEStatus,
   IDECapability,
   StorageSpec,
-  FieldMap
+  FieldMap,
+  OpResult
 } from '../shared/types'
-
-export interface ApplyResult {
-  ok: boolean
-  message: string
-  needCloseIde?: boolean
-}
 
 type SqliteSpec = Extract<StorageSpec, { kind: 'sqlite' }>
 type TomlSpec = Extract<StorageSpec, { kind: 'toml' }>
 type EnvSpec = Extract<StorageSpec, { kind: 'env' }>
 type JsonSpec = Extract<StorageSpec, { kind: 'json' }>
 
-/** 某策略下的候选目标路径（已展开环境变量） */
+/** 某策略下的候选目标路径（已展开环境变量）；M9：未解析占位符的路径为 null，被过滤掉 */
 function candidatePaths(ide: IDEAdapterDef): string[] {
   const s = ide.storage
   const raw = s.kind === 'sqlite' ? s.dbPaths : s.paths
-  return raw.map(resolvePath).filter(Boolean)
+  return raw.map(resolvePath).filter((p): p is string => Boolean(p))
 }
 
 /** 手动指定的路径优先 */
@@ -76,17 +72,50 @@ function isInstalled(ide: IDEAdapterDef): boolean {
   return locateExisting(ide) !== null
 }
 
-/** sqlite 定位凭证行：优先已知 rowKey，否则自适应探测 */
-async function locateSqliteRow(dbPath: string, s: SqliteSpec, hintRowKey?: string) {
+/** sqlite 行定位结果：ambiguous=true 表示探测命中多行，需用户手选（H1） */
+interface LocateResult {
+  row: SqliteRow | null
+  ambiguous: boolean
+}
+
+/**
+ * H1：从存储规格推导探测特征——精确 JSON 键匹配需同时命中 key + baseUrl 特征。
+ * 主特征取自 valueFields / anthropicValueFields 的字段末段；probeContains 里含 url 的作为
+ * baseUrl 补充特征、含 key 的作为 apiKey 补充特征（覆盖 api_key/base_url 等 snake_case 变体）。
+ */
+function probeFeatures(s: SqliteSpec): { keyFeatures: string[]; urlFeatures: string[] } {
+  const keySet = new Set<string>()
+  const urlSet = new Set<string>()
+  const lastSeg = (p?: string | null): string | null => (p ? p.split('.').pop() ?? null : null)
+  const ak = lastSeg(s.valueFields.apiKey)
+  if (ak) keySet.add(ak)
+  const ak2 = lastSeg(s.anthropicValueFields?.apiKey)
+  if (ak2) keySet.add(ak2)
+  const bu = lastSeg(s.valueFields.baseUrl)
+  if (bu) urlSet.add(bu)
+  const bu2 = lastSeg(s.anthropicValueFields?.baseUrl)
+  if (bu2) urlSet.add(bu2)
+  for (const c of s.probeContains ?? []) {
+    const lc = c.toLowerCase()
+    if (lc.includes('url')) urlSet.add(c)
+    else if (lc.includes('key')) keySet.add(c)
+  }
+  return { keyFeatures: [...keySet], urlFeatures: [...urlSet] }
+}
+
+/** sqlite 定位凭证行：优先已知 rowKey（精确读），否则自适应探测（H1：命中多行标记 ambiguous） */
+async function locateSqliteRow(dbPath: string, s: SqliteSpec, hintRowKey?: string): Promise<LocateResult> {
   const key = hintRowKey ?? s.rowKey
   if (key) {
     const row = await readItem(dbPath, s.table, s.keyColumn, s.valueColumn, key)
-    if (row) return row
+    if (row) return { row, ambiguous: false }
   }
-  if (s.probeContains?.length) {
-    return await probeItem(dbPath, s.table, s.keyColumn, s.valueColumn, s.probeContains)
+  const { keyFeatures, urlFeatures } = probeFeatures(s)
+  if (keyFeatures.length && urlFeatures.length) {
+    const matches = await probeItem(dbPath, s.table, s.keyColumn, s.valueColumn, keyFeatures, urlFeatures)
+    if (matches.length > 0) return { row: matches[0], ambiguous: matches.length > 1 }
   }
-  return null
+  return { row: null, ambiguous: false }
 }
 
 /** 状态探测：判断目标 IDE 是否已被自定义（不依赖我们的绑定记录） */
@@ -100,10 +129,16 @@ async function detectCustomized(ide: IDEAdapterDef, path: string | null): Promis
       return s.fields.apiKey && getPath(data, s.fields.apiKey) ? 'customized' : 'default'
     }
     if (s.kind === 'sqlite') {
-      const row = await locateSqliteRow(path, s)
+      const { row } = await locateSqliteRow(path, s)
       if (!row?.valueText) return 'default'
-      const obj = JSON.parse(row.valueText)
-      return s.valueFields.apiKey && getPath(obj, s.valueFields.apiKey) ? 'customized' : 'default'
+      // M8：区分「值非 JSON 但有效」与「解析失败」——非 JSON 的密文/字符串凭证属正常，
+      // 有值即视为已自定义，不再误报为 error（配置异常）。
+      try {
+        const obj = JSON.parse(row.valueText)
+        return s.valueFields.apiKey && getPath(obj, s.valueFields.apiKey) ? 'customized' : 'default'
+      } catch {
+        return 'customized'
+      }
     }
     if (s.kind === 'toml') {
       const doc = readToml(path)
@@ -174,82 +209,87 @@ function unbind(ideId: string): void {
 
 // ---------------- 应用（按策略分派） ----------------
 
-export async function applyProvider(ideId: string, providerId: string): Promise<ApplyResult> {
+export async function applyProvider(ideId: string, providerId: string): Promise<OpResult> {
   const ide = IDE_REGISTRY.find((x) => x.id === ideId)
   const provider: Provider | undefined = store.get('providers').find((p) => p.id === providerId)
-  if (!ide) return { ok: false, message: '未知 IDE' }
-  if (!provider) return { ok: false, message: '供应商不存在' }
+  if (!ide) return { ok: false, code: 'msg.ide.notFound' }
+  if (!provider) return { ok: false, code: 'msg.provider.notFound' }
 
   const cap = computeCapability(ide)
-  if (cap === 'manual') return { ok: false, message: `${ide.name} 需手动配置：${ide.note ?? ''}` }
-  if (cap === 'assist') return { ok: false, message: `${ide.name} 为辅助配置型，请用「生成配置」后手动粘贴` }
+  if (cap === 'manual' || cap === 'assist') return { ok: false, code: 'msg.ide.notWritable' }
   if (!ide.protocols.includes(provider.protocol)) {
-    return { ok: false, message: `${ide.name} 不支持 ${provider.protocol === 'anthropic' ? 'Anthropic' : 'OpenAI'} 协议` }
+    return { ok: false, code: 'msg.ide.incompatibleProtocol', args: { ide: ide.name, protocol: provider.protocol } }
   }
 
-  const s = ide.storage
-  // 整库/整文件回写型：必须先关闭 IDE，避免其退出时覆盖或损坏
-  if (s.kind === 'sqlite' || s.kind === 'toml') {
-    if (await isIdeRunning(ide.processNames)) {
-      return { ok: false, needCloseIde: true, message: `请先完全关闭 ${ide.name} 后再应用（其配置正被占用）` }
-    }
+  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env，此前仅 sqlite/toml）
+  if (await isIdeRunning(ide.processNames)) {
+    return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } }
   }
 
   const target = targetForWrite(ide)
-  if (!target) return { ok: false, message: '未找到该 IDE 的配置文件，请先手动指定路径' }
+  if (!target) return { ok: false, code: 'msg.ide.notFound' }
 
+  const s = ide.storage
   try {
     if (s.kind === 'json') return applyJson(ide, provider, s, target)
     if (s.kind === 'sqlite') return await applySqlite(ide, provider, s, target)
     if (s.kind === 'toml') return applyToml(ide, provider, s, target)
     return applyEnv(ide, provider, s, target)
   } catch (e) {
-    return { ok: false, message: `写入失败: ${(e as Error).message}` }
+    // decrypt 抛 KeyUnavailableError（B2 契约）-> 密钥不可用；其余写入异常 -> 配置无效
+    if (e instanceof KeyUnavailableError) return { ok: false, code: 'msg.provider.keyUnavailable' }
+    return { ok: false, code: 'msg.ide.configInvalid' }
   }
 }
 
-function applyJson(ide: IDEAdapterDef, provider: Provider, s: JsonSpec, target: string): ApplyResult {
+function applyJson(ide: IDEAdapterDef, provider: Provider, s: JsonSpec, target: string): OpResult {
+  const { data, error } = readJsonSafe(target)
+  if (error && error !== 'not_found') return { ok: false, code: 'msg.ide.configInvalid' }
   const bk = backupFile(ide.id, target, `apply:${provider.name}`)
   try {
-    const { data, error } = readJsonSafe(target)
-    if (error && error !== 'not_found') throw new Error(`配置文件损坏: ${error}`)
-    const cfg = applyFieldsToConfig(provider, s.fields, data ?? {})
+    const cfg = applyFieldsToConfig(provider, s.fields, data ?? {}, ide.id)
     writeJsonAtomic(target, cfg)
     bind(ide.id, provider.id, target)
     log('info', 'apply', `${ide.id} <- ${provider.name} (${provider.protocol}, json)`)
-    return { ok: true, message: `已应用到 ${ide.name}，重启 IDE 后生效` }
+    return { ok: true, code: 'msg.ide.applyDone', args: { name: ide.name } }
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
   }
 }
 
-async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec, dbPath: string): Promise<ApplyResult> {
-  const vals = providerValues(provider)
+async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec, dbPath: string): Promise<OpResult> {
+  const vals = providerValues(provider, ide.id)
+  // C2：Anthropic 协议优先用 anthropicValueFields（Cursor 已补齐 apiKey+baseUrl+model）
   const fields: FieldMap = provider.protocol === 'anthropic' && s.anthropicValueFields ? s.anthropicValueFields : s.valueFields
 
   // 先探测定位（写入前需知道 rowKey 与原值类型/加密形态）
-  const existingRow = fs.existsSync(dbPath) ? await locateSqliteRow(dbPath, s) : null
+  const loc: LocateResult = fs.existsSync(dbPath) ? await locateSqliteRow(dbPath, s) : { row: null, ambiguous: false }
+  // H1：命中多行无法安全定位，返回 rowAmbiguous 让用户手选，绝不默认写首个
+  if (loc.ambiguous) return { ok: false, code: 'msg.ide.rowAmbiguous' }
+  const existingRow = loc.row
   const rowKey = existingRow?.rowKey ?? s.rowKey
-  if (!rowKey) {
-    return { ok: false, message: `未能在 ${ide.name} 数据库中定位凭证槽位，请改用「生成配置」手动设置` }
+  if (!rowKey) return { ok: false, code: 'msg.ide.notFound' }
+
+  // H2：原行 JSON.parse 失败则中止并返回 parseError，绝不静默置 {} 覆盖整行导致其它字段丢失
+  let obj: any = {}
+  if (existingRow?.valueText) {
+    try {
+      obj = JSON.parse(existingRow.valueText)
+    } catch {
+      return { ok: false, code: 'msg.ide.parseError' }
+    }
   }
 
   const bk = backupFile(ide.id, dbPath, `apply:${provider.name}`, [`${dbPath}-wal`, `${dbPath}-shm`])
   try {
-    let obj: any = {}
-    if (existingRow?.valueText) {
-      try {
-        obj = JSON.parse(existingRow.valueText)
-      } catch {
-        obj = {}
-      }
-    }
-    // apiKey 镜像原字段加密形态：原值是 DPAPI 密文则重新加密，否则明文
+    // apiKey 落盘：原值是 DPAPI 密文则镜像加密；首次写入（无原值可镜像）且声明 encryptSecret 时默认加密（Alex-M3）
     if (fields.apiKey) {
-      const dec = tryDecryptSecret(getPath(obj, fields.apiKey))
-      const mirror = dec.encrypted && s.encryptSecret !== false
-      setPath(obj, fields.apiKey, encryptSecret(vals.apiKey, mirror))
+      const original = getPath(obj, fields.apiKey)
+      const dec = tryDecryptSecret(original)
+      const hadOriginal = original != null && original !== ''
+      const shouldEncrypt = s.encryptSecret !== false && (dec.encrypted || !hadOriginal)
+      setPath(obj, fields.apiKey, encryptSecret(vals.apiKey, shouldEncrypt))
     }
     if (fields.baseUrl) setPath(obj, fields.baseUrl, vals.baseUrl)
     if (fields.model) setPath(obj, fields.model, vals.model)
@@ -257,7 +297,7 @@ async function applySqlite(ide: IDEAdapterDef, provider: Provider, s: SqliteSpec
     await writeItem(dbPath, s.table, s.keyColumn, s.valueColumn, rowKey, JSON.stringify(obj), existingRow?.isBlob ?? false)
     bind(ide.id, provider.id, dbPath, rowKey)
     log('info', 'apply', `${ide.id} <- ${provider.name} (${provider.protocol}, sqlite:${rowKey})`)
-    return { ok: true, message: `已应用到 ${ide.name}，重启 IDE 后生效` }
+    return { ok: true, code: 'msg.ide.applyNeedRestart' }
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
@@ -269,8 +309,8 @@ function subToken(v: string | number | boolean, vals: { apiKey: string; baseUrl:
   return v.replace(/\$\{model\}/g, vals.model).replace(/\$\{baseUrl\}/g, vals.baseUrl).replace(/\$\{apiKey\}/g, vals.apiKey)
 }
 
-function applyToml(ide: IDEAdapterDef, provider: Provider, s: TomlSpec, target: string): ApplyResult {
-  const vals = providerValues(provider)
+function applyToml(ide: IDEAdapterDef, provider: Provider, s: TomlSpec, target: string): OpResult {
+  const vals = providerValues(provider, ide.id)
   const bk = backupFile(ide.id, target, `apply:${provider.name}`)
   try {
     const doc = readToml(target)
@@ -279,31 +319,34 @@ function applyToml(ide: IDEAdapterDef, provider: Provider, s: TomlSpec, target: 
       const t = ensureTable(doc, s.table)
       for (const [k, v] of Object.entries(s.tableValues)) t[k] = subToken(v, vals)
     }
+    // M5：维持整体重写（依赖上面的自动备份兜底），取舍详见 tomlStore.ts 头部注释
     writeTomlAtomic(target, doc)
     // 密钥单独落到 auth.json（如 Codex）
     if (s.secretFile) {
       const sp = resolvePath(s.secretFile.path)
-      const bk2 = backupFile(ide.id, sp, `apply:${provider.name}:secret`)
-      try {
-        const j = fs.existsSync(sp) ? JSON.parse(fs.readFileSync(sp, 'utf8')) : {}
-        j[s.secretFile.field] = vals.apiKey
-        writeJsonAtomic(sp, j)
-      } catch (e) {
-        if (bk2) restoreBackup(bk2.id)
-        throw e
+      if (sp) {
+        const bk2 = backupFile(ide.id, sp, `apply:${provider.name}:secret`)
+        try {
+          const j = fs.existsSync(sp) ? JSON.parse(fs.readFileSync(sp, 'utf8')) : {}
+          j[s.secretFile.field] = vals.apiKey
+          writeJsonAtomic(sp, j)
+        } catch (e) {
+          if (bk2) restoreBackup(bk2.id)
+          throw e
+        }
       }
     }
     bind(ide.id, provider.id, target)
     log('info', 'apply', `${ide.id} <- ${provider.name} (${provider.protocol}, toml)`)
-    return { ok: true, message: `已应用到 ${ide.name}，重开终端 / IDE 后生效` }
+    return { ok: true, code: 'msg.ide.applyNeedRestart' }
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
   }
 }
 
-function applyEnv(ide: IDEAdapterDef, provider: Provider, s: EnvSpec, target: string): ApplyResult {
-  const vals = providerValues(provider)
+function applyEnv(ide: IDEAdapterDef, provider: Provider, s: EnvSpec, target: string): OpResult {
+  const vals = providerValues(provider, ide.id)
   const bk = backupFile(ide.id, target, `apply:${provider.name}`)
   try {
     const updates: Record<string, string> = {}
@@ -313,7 +356,7 @@ function applyEnv(ide: IDEAdapterDef, provider: Provider, s: EnvSpec, target: st
     writeEnvAtomic(target, updates)
     bind(ide.id, provider.id, target)
     log('info', 'apply', `${ide.id} <- ${provider.name} (${provider.protocol}, env)`)
-    return { ok: true, message: `已应用到 ${ide.name}，重开终端后生效` }
+    return { ok: true, code: 'msg.ide.applyDone', args: { name: ide.name } }
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
@@ -322,25 +365,25 @@ function applyEnv(ide: IDEAdapterDef, provider: Provider, s: EnvSpec, target: st
 
 // ---------------- 恢复默认（按策略分派） ----------------
 
-export async function resetIDE(ideId: string): Promise<ApplyResult & { skipped?: boolean }> {
+export async function resetIDE(ideId: string): Promise<OpResult> {
   const ide = IDE_REGISTRY.find((x) => x.id === ideId)
-  if (!ide) return { ok: false, message: '未知 IDE' }
+  if (!ide) return { ok: false, code: 'msg.ide.notFound' }
 
   const cap = computeCapability(ide)
+  // 手动/辅助配置型无需恢复：ok=true 且 canceled=true 表示「已跳过、未实际改动」
   if (cap === 'manual' || cap === 'assist') {
-    return { ok: true, skipped: true, message: `${ide.name} 为手动/辅助配置型，已跳过` }
+    return { ok: true, canceled: true, code: 'msg.ide.notWritable' }
   }
 
-  const s = ide.storage
-  if (s.kind === 'sqlite' || s.kind === 'toml') {
-    if (await isIdeRunning(ide.processNames)) {
-      return { ok: false, needCloseIde: true, message: `请先完全关闭 ${ide.name} 后再恢复（其配置正被占用）` }
-    }
+  // M4：整库/整文件回写前统一检测 IDE 是否运行（含 json/env）
+  if (await isIdeRunning(ide.processNames)) {
+    return { ok: false, code: 'msg.ide.needClose', args: { name: ide.name } }
   }
 
   const target = locateExisting(ide)
-  if (!target) return { ok: false, message: '未找到配置文件' }
+  if (!target) return { ok: false, code: 'msg.ide.notFound' }
 
+  const s = ide.storage
   try {
     if (s.kind === 'json') resetJson(ide, s, target)
     else if (s.kind === 'sqlite') await resetSqlite(ide, s, target)
@@ -348,10 +391,26 @@ export async function resetIDE(ideId: string): Promise<ApplyResult & { skipped?:
     else resetEnv(ide, s, target)
     unbind(ideId)
     log('info', 'reset', ideId)
-    return { ok: true, message: `${ide.name} 已恢复默认` }
+    return { ok: true, code: 'msg.ide.resetDone', args: { name: ide.name } }
   } catch (e) {
-    return { ok: false, message: `恢复失败: ${(e as Error).message}` }
+    if (e instanceof KeyUnavailableError) return { ok: false, code: 'msg.provider.keyUnavailable' }
+    return { ok: false, code: 'msg.ide.configInvalid' }
   }
+}
+
+/**
+ * M6：清理历史上 applyFieldsToConfig 注入的 protocol 私有键。
+ * 该键曾写在各字段父路径下（如 language_models.openai.protocol），恢复默认时一并移除，
+ * 避免为此前用户残留孤儿键。字段为扁平键（无父路径）时为空操作，安全。
+ */
+function stripInjectedProtocol(obj: any, fields: FieldMap): void {
+  const parents = new Set<string>()
+  for (const p of [fields.apiKey, fields.baseUrl, fields.model]) {
+    if (!p) continue
+    const idx = p.lastIndexOf('.')
+    if (idx > 0) parents.add(p.slice(0, idx))
+  }
+  for (const parent of parents) unsetPath(obj, `${parent}.protocol`)
 }
 
 function resetJson(ide: IDEAdapterDef, s: JsonSpec, target: string): void {
@@ -363,6 +422,7 @@ function resetJson(ide: IDEAdapterDef, s: JsonSpec, target: string): void {
     if (s.fields.apiKey) unsetPath(cfg, s.fields.apiKey)
     if (s.fields.baseUrl) unsetPath(cfg, s.fields.baseUrl)
     if (s.fields.model) unsetPath(cfg, s.fields.model)
+    stripInjectedProtocol(cfg, s.fields) // M6
     writeJsonAtomic(target, cfg)
   } catch (e) {
     if (bk) restoreBackup(bk.id)
@@ -372,7 +432,10 @@ function resetJson(ide: IDEAdapterDef, s: JsonSpec, target: string): void {
 
 async function resetSqlite(ide: IDEAdapterDef, s: SqliteSpec, dbPath: string): Promise<void> {
   const hintRowKey = store.get('ideBindings')[ide.id]?.sqliteRowKey
-  const row = await locateSqliteRow(dbPath, s, hintRowKey)
+  const loc = await locateSqliteRow(dbPath, s, hintRowKey)
+  // H1：无绑定且命中多行时无法安全定位，跳过以免误删无关行
+  if (loc.ambiguous && !hintRowKey) return
+  const row = loc.row
   if (!row?.valueText) return
   let obj: any
   try {
@@ -386,6 +449,7 @@ async function resetSqlite(ide: IDEAdapterDef, s: SqliteSpec, dbPath: string): P
       if (fm.apiKey) unsetPath(obj, fm.apiKey)
       if (fm.baseUrl) unsetPath(obj, fm.baseUrl)
       if (fm.model) unsetPath(obj, fm.model)
+      stripInjectedProtocol(obj, fm) // M6（sqlite 字段多为扁平键，通常为空操作，防御性清理）
     }
     clear(s.valueFields)
     if (s.anthropicValueFields) clear(s.anthropicValueFields)
@@ -407,10 +471,11 @@ function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
         if (k === 'model_provider' && doc[k] === 'codeswitch') delete doc[k]
       }
     }
+    // M6：toml 策略从不注入 protocol 私有键（apply 仅写 scalars/table），故无需清理
     writeTomlAtomic(target, doc)
     if (s.secretFile) {
       const sp = resolvePath(s.secretFile.path)
-      if (fs.existsSync(sp)) {
+      if (sp && fs.existsSync(sp)) {
         const bk2 = backupFile(ide.id, sp, 'reset:secret')
         try {
           const j = JSON.parse(fs.readFileSync(sp, 'utf8'))
@@ -431,6 +496,7 @@ function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
 function resetEnv(ide: IDEAdapterDef, s: EnvSpec, target: string): void {
   const bk = backupFile(ide.id, target, 'reset')
   try {
+    // M6：env 策略从不注入 protocol 私有键（仅按 mapping 增删），故无需清理
     const keys = [s.mapping.apiKey, s.mapping.baseUrl, s.mapping.model].filter(Boolean) as string[]
     removeEnvKeys(target, keys)
   } catch (e) {
@@ -441,22 +507,28 @@ function resetEnv(ide: IDEAdapterDef, s: EnvSpec, target: string): void {
 
 // ---------------- 生成配置（assist / 无法自动定位时的兜底） ----------------
 
-export function generateConfig(ideId: string, providerId: string): { ok: boolean; message: string; text?: string; targetPath?: string } {
+export function generateConfig(ideId: string, providerId: string): OpResult<{ text: string; targetPath?: string }> {
   const ide = IDE_REGISTRY.find((x) => x.id === ideId)
   const provider: Provider | undefined = store.get('providers').find((p) => p.id === providerId)
-  if (!ide) return { ok: false, message: '未知 IDE' }
-  if (!provider) return { ok: false, message: '供应商不存在' }
+  if (!ide) return { ok: false, code: 'msg.ide.notFound' }
+  if (!provider) return { ok: false, code: 'msg.provider.notFound' }
   if (!ide.protocols.includes(provider.protocol)) {
-    return { ok: false, message: `${ide.name} 不支持 ${provider.protocol === 'anthropic' ? 'Anthropic' : 'OpenAI'} 协议` }
+    return { ok: false, code: 'msg.ide.incompatibleProtocol', args: { ide: ide.name, protocol: provider.protocol } }
   }
 
-  const vals = providerValues(provider)
+  let vals: { apiKey: string; baseUrl: string; model: string }
+  try {
+    vals = providerValues(provider, ide.id)
+  } catch {
+    return { ok: false, code: 'msg.provider.keyUnavailable' }
+  }
+
   const s = ide.storage
   const targetPath = targetForWrite(ide) ?? undefined
   let text = ''
 
   if (s.kind === 'json') {
-    text = JSON.stringify(applyFieldsToConfig(provider, s.fields, {}), null, 2)
+    text = JSON.stringify(applyFieldsToConfig(provider, s.fields, {}, ide.id), null, 2)
   } else if (s.kind === 'sqlite') {
     const fields = provider.protocol === 'anthropic' && s.anthropicValueFields ? s.anthropicValueFields : s.valueFields
     const obj: any = {}
@@ -471,8 +543,10 @@ export function generateConfig(ideId: string, providerId: string): { ok: boolean
       const t = ensureTable(doc, s.table)
       for (const [k, v] of Object.entries(s.tableValues)) t[k] = subToken(v, vals)
     }
-    text = `# ${resolvePath(s.paths[0])}\n` + tomlPreview(doc)
-    if (s.secretFile) text += `\n\n# ${resolvePath(s.secretFile.path)}\n{\n  "${s.secretFile.field}": "${vals.apiKey}"\n}`
+    text = `# ${resolvePath(s.paths[0]) ?? s.paths[0]}\n` + tomlPreview(doc)
+    if (s.secretFile) {
+      text += `\n\n# ${resolvePath(s.secretFile.path) ?? s.secretFile.path}\n{\n  "${s.secretFile.field}": "${vals.apiKey}"\n}`
+    }
   } else {
     const lines: string[] = []
     if (s.mapping.apiKey) lines.push(`${s.mapping.apiKey}=${vals.apiKey}`)
@@ -485,7 +559,7 @@ export function generateConfig(ideId: string, providerId: string): { ok: boolean
     // 无可写字段（如 Copilot BYOK）：给出可复制的三要素摘要
     text = `API Key: ${vals.apiKey}\nBase URL: ${vals.baseUrl}\nModel: ${vals.model}`
   }
-  return { ok: true, message: '已生成配置，可复制后手动粘贴', text, targetPath }
+  return { ok: true, data: { text, targetPath } }
 }
 
 /** 极简 TOML 预览（仅用于生成配置的展示，不落盘） */
@@ -502,15 +576,15 @@ function tomlPreview(doc: Record<string, any>): string {
 }
 
 /** 手动指定 IDE 配置文件路径（保留已应用的供应商绑定） */
-export function manualAdd(ideId: string, configPath: string): { ok: boolean; message: string } {
+export function manualAdd(ideId: string, configPath: string): OpResult {
   const ide = IDE_REGISTRY.find((x) => x.id === ideId)
-  if (!ide) return { ok: false, message: '未知 IDE' }
-  if (!fs.existsSync(configPath)) return { ok: false, message: '文件不存在' }
+  if (!ide) return { ok: false, code: 'msg.ide.notFound' }
+  if (!fs.existsSync(configPath)) return { ok: false, code: 'msg.ide.pathInvalid' }
   const bindings = store.get('ideBindings')
   bindings[ideId] = { providerId: bindings[ideId]?.providerId ?? null, configPath, sqliteRowKey: bindings[ideId]?.sqliteRowKey }
   store.set('ideBindings', bindings)
   log('info', 'manual-path', `${ideId} -> ${configPath}`)
-  return { ok: true, message: '路径已保存' }
+  return { ok: true, code: 'msg.ide.manualAddOk' }
 }
 
 /** 供 UI 在打开应用弹窗前预判：目标 IDE 是否正在运行 */

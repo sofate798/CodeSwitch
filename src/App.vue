@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NConfigProvider, NMessageProvider, NDialogProvider,
-  NSpace, NTag, darkTheme, lightTheme
+  NSpace, NTag, darkTheme
 } from 'naive-ui'
 import {
   HomeOutline as IconHomeOutline, HardwareChipOutline as IconHardwareChipOutline,
@@ -39,29 +39,43 @@ const themeOverrides = {
   }
 }
 
-const activeTheme = computed(() => {
+// Jack-High1：跟随系统主题。用 matchMedia 建立对 OS 配色的响应式监听，
+// 'system' 模式下依据系统实际明/暗偏好实时切换 Naive theme 与 <html> data-theme。
+const mediaQuery = window.matchMedia('(prefers-color-scheme: light)')
+const prefersLight = ref(mediaQuery.matches)
+function onMediaChange(e: MediaQueryListEvent) { prefersLight.value = e.matches }
+
+// 综合用户模式与系统偏好，解析出最终是否为深色。
+const isDark = computed(() => {
   const mode = store.settings.theme
-  if (mode === 'light') return lightTheme
-  if (mode === 'dark') return darkTheme
-  return darkTheme // 跟随系统默认深色（代码工具定位）
+  if (mode === 'light') return false
+  if (mode === 'dark') return true
+  return !prefersLight.value // 'system'：跟随 OS 偏好
 })
 
-function applyHtmlTheme() {
-  // Naive UI 的 activeTheme 决定组件配色；这里把同一选择同步到 <html>，
-  // 让 main.css 里的自定义变量（--bg-* / --text-* 等）跟随切换。
-  const mode = store.settings.theme
-  document.documentElement.dataset.theme = mode === 'light' ? 'light' : 'dark'
-}
+// 深色用 Naive darkTheme，浅色用默认主题（null）。
+const activeTheme = computed(() => (isDark.value ? darkTheme : null))
 
-watch(() => store.settings.theme, applyHtmlTheme, { immediate: true })
+// 将同一选择同步到 <html data-theme>，让 main.css 的自定义变量（--bg-* / --text-* 等）跟随切换。
+watch(isDark, (dark) => {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+}, { immediate: true })
 
 const activeKey = computed(() => route.path)
 const installedCount = computed(() => store.installedIDEs.length)
 const routeTitle = computed(() => t(String(route.meta.titleKey ?? '')))
 
 onMounted(() => {
+  // 建立系统主题监听（OS 偏好变化时实时更新）。
+  mediaQuery.addEventListener('change', onMediaChange)
+  // store.refreshAll 内部已 try/catch 兜底、绝不向外抛，这里无需再 .catch。
   store.refreshAll()
   store.refreshSettings()
+})
+
+onBeforeUnmount(() => {
+  // 组件卸载时清理监听，避免泄漏。
+  mediaQuery.removeEventListener('change', onMediaChange)
 })
 
 function nav(path: string) { router.push(path) }
@@ -75,6 +89,8 @@ function nav(path: string) { router.push(path) }
           <!-- 侧边栏 -->
           <aside class="sidebar">
             <div class="logo">
+              <!-- 品牌标识豁免项：logo.png 为位图品牌 Logo，不适用矢量图标要求；
+                   已通过 .logo-img 的 object-fit/尺寸处理，确保在深/浅主题下均清晰。 -->
               <img :src="logoUrl" class="logo-img" alt="CodeSwitch" />
               <span class="logo-text">CodeSwitch</span>
             </div>
@@ -86,7 +102,7 @@ function nav(path: string) { router.push(path) }
                 :class="{ active: activeKey === item.path }"
                 @click="nav(item.path)"
               >
-                <n-icon :component="item.icon" :size="18" />
+                <n-icon :component="item.icon" :size="20" />
                 <span>{{ item.label }}</span>
               </button>
             </nav>
@@ -130,7 +146,7 @@ function nav(path: string) { router.push(path) }
   display: flex; flex-direction: column; padding: 16px 10px; flex-shrink: 0;
 }
 .logo { display: flex; align-items: center; gap: 8px; padding: 4px 10px 20px; }
-.logo-img { width: 24px; height: 24px; border-radius: 6px; }
+.logo-img { width: 24px; height: 24px; border-radius: 6px; object-fit: contain; display: block; }
 .logo-text { font-weight: 700; font-size: 15px; letter-spacing: 0.3px; }
 .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .nav-item {

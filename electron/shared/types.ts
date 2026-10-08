@@ -2,12 +2,94 @@ import type { Component } from 'vue'
 
 export type Protocol = 'openai' | 'anthropic'
 
+/**
+ * 全项目统一消息码（单一真源）。服务层/主进程返回 OpResult 时以此标识结果语义，
+ * 前端据 code + args 走 i18n 渲染，杜绝中文字符串硬编码比较。
+ */
+export type MsgCode =
+  // 通用
+  | 'msg.common.canceled'
+  | 'msg.common.error'
+  | 'msg.common.ok'
+  // IDE
+  | 'msg.ide.applyDone'
+  | 'msg.ide.applyNeedRestart'
+  | 'msg.ide.resetDone'
+  | 'msg.ide.resetAllDone'
+  | 'msg.ide.notFound'
+  | 'msg.ide.notWritable'
+  | 'msg.ide.needClose'
+  | 'msg.ide.parseError'
+  | 'msg.ide.configInvalid'
+  | 'msg.ide.pathInvalid'
+  | 'msg.ide.manualAddOk'
+  | 'msg.ide.incompatibleProtocol'
+  | 'msg.ide.rowAmbiguous'
+  // 供应商
+  | 'msg.provider.saveOk'
+  | 'msg.provider.removeOk'
+  | 'msg.provider.missingFields'
+  | 'msg.provider.testOk'
+  | 'msg.provider.testTimeout'
+  | 'msg.provider.testAuthFailed'
+  | 'msg.provider.testBadUrl'
+  | 'msg.provider.testNetErr'
+  | 'msg.provider.testHttpErr'
+  | 'msg.provider.keyUnavailable'
+  | 'msg.provider.exportOk'
+  | 'msg.provider.importOk'
+  | 'msg.provider.importFailed'
+  | 'msg.provider.notFound'
+  // 快照 / 备份 / 日志
+  | 'msg.snapshot.createOk'
+  | 'msg.snapshot.applyOk'
+  | 'msg.snapshot.removeOk'
+  | 'msg.snapshot.exportOk'
+  | 'msg.snapshot.importOk'
+  | 'msg.snapshot.importFailed'
+  | 'msg.backup.restoreOk'
+  | 'msg.backup.restoreFailed'
+  | 'msg.backup.removeOk'
+  | 'msg.log.clearOk'
+  | 'msg.log.exportOk'
+  // 设置 / 代理 / 更新
+  | 'msg.settings.saveOk'
+  | 'msg.settings.dataDirChanged'
+  | 'msg.settings.resetDone'
+  | 'msg.settings.relaunchNeeded'
+  | 'msg.proxy.started'
+  | 'msg.proxy.stopped'
+  | 'msg.proxy.error'
+  | 'msg.update.available'
+  | 'msg.update.notAvailable'
+  | 'msg.update.downloaded'
+  | 'msg.update.noFeed'
+  | 'msg.update.error'
+
+/**
+ * 统一操作结果契约：所有会产生用户可见反馈的 IPC 操作均以此返回。
+ * - ok：成功与否
+ * - code：i18n 消息码（MsgCode），前端据此渲染提示
+ * - args：消息码插值参数（如端口号、数量、路径等）
+ * - data：成功时携带的业务数据
+ * - canceled：用户主动取消系统对话框（导入/导出/选择目录等），前端应静默处理
+ */
+export interface OpResult<T = unknown> {
+  ok: boolean
+  code?: MsgCode
+  args?: Record<string, string | number>
+  data?: T
+  canceled?: boolean
+}
+
 export interface Provider {
   id: string
   name: string
   protocol: Protocol
   /** 加密后的 apiKey，格式: enc:<iv>:<tag>:<data> */
   apiKey: string
+  /** 明文密钥后 4 位，供前端 sk-****xxxx 脱敏展示（绝不含完整明文） */
+  keyTail?: string
   baseUrl: string
   model: string
   group?: string
@@ -174,45 +256,44 @@ export interface ProxyStatus {
 export interface API {
   ide: {
     scan(): Promise<IDEState[]>
-    apply(ideId: string, providerId: string): Promise<{ ok: boolean; message: string; needCloseIde?: boolean }>
-    reset(ideId: string | 'all'): Promise<{ ok: boolean; message: string }>
-    manualAdd(ideId: string, configPath: string): Promise<{ ok: boolean; message: string }>
+    apply(ideId: string, providerId: string): Promise<OpResult>
+    reset(ideId: string | 'all'): Promise<OpResult>
+    manualAdd(ideId: string, configPath: string): Promise<OpResult>
     /** 检测目标 IDE 是否正在运行（sqlite/toml 写入前需关闭） */
     checkRunning(ideId: string): Promise<boolean>
-    /** 为 assist 型 IDE 生成待写入的配置文本（供一键复制） */
-    generateConfig(ideId: string, providerId: string): Promise<{ ok: boolean; message: string; text?: string; targetPath?: string }>
+    /** 为 assist 型 IDE 生成待写入的配置文本（供一键复制），前端从 data.text / data.targetPath 读取 */
+    generateConfig(ideId: string, providerId: string): Promise<OpResult<{ text: string; targetPath?: string }>>
   }
   provider: {
     list(): Promise<Provider[]>
     save(p: Partial<Provider> & { protocol: Protocol }): Promise<Provider>
     remove(id: string): Promise<void>
-    test(id: string): Promise<TestResult>
-    revealKey(id: string): Promise<string>
-    /** 导出全部供应商为 JSON 文件（含明文 Key，主进程弹保存对话框） */
-    export(): Promise<{ ok: boolean; message: string; count?: number }>
-    /** 从 JSON 文件导入供应商（主进程弹打开对话框），返回导入数量 */
-    import(): Promise<{ ok: boolean; message: string; count?: number }>
+    test(id: string): Promise<OpResult<{ latencyMs?: number }>>
+    /** 导出全部供应商为 JSON 文件（含明文 Key，主进程弹保存对话框）；成功 code=msg.provider.exportOk，data=文件路径，args.count=数量 */
+    export(): Promise<OpResult<string>>
+    /** 从 JSON 文件导入供应商（主进程弹打开对话框）；成功 code=msg.provider.importOk（args.count），解析/校验失败 code=msg.provider.importFailed */
+    import(): Promise<OpResult>
   }
   snapshot: {
     list(): Promise<Snapshot[]>
     create(name: string, description?: string): Promise<Snapshot>
-    apply(id: string): Promise<{ ok: boolean; message: string }>
-    remove(id: string): Promise<void>
-    /** 导出单个快照为 .csnap 文件（内嵌其引用的供应商，含明文 Key，主进程弹保存对话框） */
-    export(id: string): Promise<{ ok: boolean; message: string }>
-    /** 从 .csnap 文件导入快照（主进程弹打开对话框），自动导入内嵌供应商并重映射绑定 */
-    import(): Promise<{ ok: boolean; message: string; count?: number }>
+    apply(id: string): Promise<OpResult>
+    remove(id: string): Promise<OpResult>
+    /** 导出单个快照为 .csnap 文件（内嵌其引用的供应商，含明文 Key，主进程弹保存对话框）；成功 code=msg.snapshot.exportOk，data=文件路径 */
+    export(id: string): Promise<OpResult<string>>
+    /** 从 .csnap 文件导入快照（主进程弹打开对话框），自动导入内嵌供应商并重映射绑定；成功 code=msg.snapshot.importOk（args.count/args.name），失败 code=msg.snapshot.importFailed */
+    import(): Promise<OpResult>
   }
   backup: {
     list(ideId?: string): Promise<BackupEntry[]>
-    restore(backupId: string): Promise<{ ok: boolean; message: string }>
-    remove(backupId: string): Promise<void>
+    restore(backupId: string): Promise<OpResult>
+    remove(backupId: string): Promise<OpResult>
   }
   log: {
     list(): Promise<LogEntry[]>
-    clear(): Promise<void>
-    /** 导出当前已加载的日志为 txt 或 json（主进程弹保存对话框） */
-    export(format: 'txt' | 'json'): Promise<{ ok: boolean; message: string; count?: number }>
+    clear(): Promise<OpResult>
+    /** 导出当前已加载的日志为 txt 或 json（主进程弹保存对话框）；成功 code=msg.log.exportOk，data=文件路径，args.count=条数 */
+    export(format: 'txt' | 'json'): Promise<OpResult<string>>
   }
   settings: {
     get(): Promise<AppSettings>
@@ -223,19 +304,24 @@ export interface API {
     status(): Promise<ProxyStatus>
     /** 修改配置并按 enabled 启停（端口变化会重启） */
     configure(patch: Partial<ProxyConfig>): Promise<ProxyStatus>
+    /** 获取网关本地鉴权 token，供用户在客户端配置 Authorization: Bearer <token> */
+    token(): Promise<string>
   }
   system: {
     pickFile(defaultPath?: string): Promise<string | null>
     openDataDir(): Promise<void>
     /** 在系统文件管理器中定位并选中指定文件 */
     openPath(targetPath: string): Promise<void>
-    checkUpdate(): Promise<{ pending: boolean; available: boolean; version?: string; message: string }>
+    /** 检查更新（事件驱动）：返回 OpResult，version 经 args.version 承载（available/notAvailable/noFeed/error） */
+    checkUpdate(): Promise<OpResult>
+    /** 安装已下载的更新并重启（quitAndInstall），对应 system:install-update（主进程注册） */
+    installUpdate(): Promise<OpResult>
     /** 获取数据目录：current=实际生效目录，custom=用户自定义目录（未设置为 null） */
     getDataDir(): Promise<{ current: string; custom: string | null }>
-    /** 选择并迁移到新的数据目录（弹目录选择框）；成功后需重启应用生效 */
-    setDataDir(): Promise<{ ok: boolean; message: string; needRestart?: boolean }>
+    /** 选择并迁移到新的数据目录（弹目录选择框）；成功 code=msg.settings.dataDirChanged（data.needRestart=true 提示重启），失败 code=msg.common.error */
+    setDataDir(): Promise<OpResult<{ needRestart?: boolean }>>
     /** 重置软件：清除 CodeSwitch 全部本地数据（供应商/快照/备份/日志/绑定/网关/设置） */
-    resetAll(): Promise<{ ok: boolean; message: string }>
+    resetAll(): Promise<OpResult>
     /** 重启应用（更改数据目录后生效） */
     relaunch(): Promise<void>
   }
