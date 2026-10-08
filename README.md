@@ -32,6 +32,7 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 - **供应商管理**：新增、编辑、删除 AI 供应商，必须显式选择协议类型（OpenAI / Anthropic），支持分组、连接测试与 JSON 导入导出。
 - **一键应用与恢复**：对单个或全部 IDE 应用供应商配置；修改前自动备份，支持一键恢复官方默认设置与失败自动回滚。数据库 / TOML 类 IDE 写入前会检测其是否在运行，未关闭时拒绝写入以防配置被覆盖或损坏。
 - **配置生成与复制**：对辅助型 IDE（如 GitHub Copilot）或无法自动定位凭证槽位的情况，可一键生成对应格式的配置文本并复制，按提示在 IDE 设置界面手动粘贴。
+- **本地转发网关**：在 `127.0.0.1` 启动 OpenAI / Anthropic 双协议兼容的本地代理，把请求转发到选定供应商，支持两协议互转（含流式 SSE）与本地随机 token 鉴权、防 DNS rebinding。任何可自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）都可指向网关复用同一份供应商配置；Cursor 免费版自带 AI 被官方服务端封锁自定义端点，也可在 Cursor 内装免费的 OpenAI 兼容扩展指向网关，免订阅使用自定义供应商。
 - **快照管理**：保存当前所有 IDE 的供应商绑定状态，可随时一键切换回某个快照。
 - **备份中心**：按 IDE 归档历史备份（含 SQLite 的 `-wal` / `-shm` 附属文件），支持查看、恢复与删除。
 - **操作日志**：记录每一次修改 / 恢复操作，内存缓冲 + 按日文件落盘，便于追溯。
@@ -48,7 +49,7 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 | IDE | 支持协议 | 配置载体 | 自动化能力 |
 | --- | --- | --- | --- |
-| Cursor | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，凭证 DPAPI 加密） | 一键写入（需 Pro 及以上订阅，写入前关闭 Cursor） |
+| Cursor | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，凭证 DPAPI 加密） | 一键写入（需 Pro 及以上订阅，写入前关闭 Cursor；免费版可改用本地转发网关 + Cline/Continue 扩展） |
 | Windsurf | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测凭证行） | 一键写入（写入前关闭 Windsurf） |
 | Trae | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Trae） |
 | Zed | OpenAI / Anthropic | `settings.json`（明文 JSON） | 一键写入（文件不存在时自动创建） |
@@ -95,6 +96,15 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 连接测试超时 5s，返回 200 视为成功，并展示延迟与错误信息。
 
+### 本地转发网关的跨协议转换
+
+启用网关后，CodeSwitch 在 `http://127.0.0.1:<port>` 同时暴露两套入站接口，并按目标供应商的协议自动转换：
+
+- 入站路由：`GET /health`（健康检查，无需 token）、`GET /v1/models`、`POST /v1/chat/completions`（OpenAI 入站）、`POST /v1/messages`（Anthropic 入站）。
+- 同协议直接透传，跨协议（OpenAI ↔ Anthropic）自动转换请求 / 响应，含流式 SSE。
+- 安全：仅监听 `127.0.0.1`，启动时生成随机 token（`Authorization: Bearer` / `x-codeswitch-token` / `?token=` 三种携带方式）；CORS 收紧为回显本机 Origin，并校验 Host 防 DNS rebinding。
+- 已知限制：跨协议的工具调用（tools / tool_choice）仅在**非流式**请求 / 响应下完整映射，流式（SSE）仅保证纯文本正确。
+
 ---
 
 ## 技术栈
@@ -133,6 +143,7 @@ CodeSwitch 由 electron-vite 拆分为三个构建目标：`main`（主进程）
 │  ├── IDE Scanner Service                │
 │  ├── Config Adapter (Registry)          │
 │  ├── Provider Service (OpenAI/Anthropic)│
+│  ├── Local Forwarding Gateway           │
 │  ├── Backup Service                     │
 │  ├── Crypto Service (AES-256-GCM)       │
 │  ├── Snapshot Service                   │
@@ -144,7 +155,7 @@ CodeSwitch 由 electron-vite 拆分为三个构建目标：`main`（主进程）
 └─────────────────────────────────────────┘
 ```
 
-主进程服务位于 [`electron/services/`](electron/services)，IPC 路由集中在 [`electron/ipc/handlers.ts`](electron/ipc/handlers.ts)，渲染进程可调用的接口类型定义在 [`electron/shared/types.ts`](electron/shared/types.ts) 的 `API` 接口中。其中 IDE 探测与写入（`ideScanner.ts`）按适配器的 `storage` 策略分派到四个存储后端（`sqliteStore` / `tomlStore` / `envStore` 与 JSON 原子写），写入前由 `processGuard.ts` 检测目标 IDE 是否在运行，凭证的 DPAPI 镜像加密由 `secureValue.ts`（封装 Electron `safeStorage`）完成。
+主进程服务位于 [`electron/services/`](electron/services)，IPC 路由集中在 [`electron/ipc/handlers.ts`](electron/ipc/handlers.ts)，渲染进程可调用的接口类型定义在 [`electron/shared/types.ts`](electron/shared/types.ts) 的 `API` 接口中。其中 IDE 探测与写入（`ideScanner.ts`）按适配器的 `storage` 策略分派到四个存储后端（`sqliteStore` / `tomlStore` / `envStore` 与 JSON 原子写），写入前由 `processGuard.ts` 检测目标 IDE 是否在运行，凭证的 DPAPI 镜像加密由 `secureValue.ts`（封装 Electron `safeStorage`）完成。本地转发网关（`proxy.ts` + `proxyTranslate.ts`）在 `127.0.0.1` 提供 OpenAI / Anthropic 双协议入站与跨协议转换，纯函数转换逻辑独立于 Electron 便于复用与单测。自定义数据目录由 `paths.ts` 管理，并在 `main/bootstrap.ts` 中作为最先执行的副作用在 electron-store 实例化前重定向 `userData`。
 
 前端页面（[`src/views/`](src/views)）：
 
@@ -153,7 +164,7 @@ CodeSwitch 由 electron-vite 拆分为三个构建目标：`main`（主进程）
 - `Snapshots.vue`：快照管理
 - `Backups.vue`：备份中心
 - `Logs.vue`：操作日志
-- `Settings.vue`：主题、语言、开机自启、数据目录、更新等设置
+- `Settings.vue`：主题、语言、开机自启、本地转发网关、数据目录、重置与更新等设置
 
 ---
 
@@ -200,6 +211,7 @@ Windows 打包配置见 [`electron-builder.yml`](electron-builder.yml)（appId `
 ```text
 CodeSwitch/
 ├── electron/                  # 主进程与预加载侧
+│   ├── main/bootstrap.ts      # 最先执行的引导：重定向自定义数据目录
 │   ├── main/index.ts          # 主进程入口：窗口、托盘、自动更新
 │   ├── preload/index.ts       # contextBridge 桥接，暴露 window.api
 │   ├── ipc/handlers.ts        # IPC 路由与处理器
@@ -207,6 +219,8 @@ CodeSwitch/
 │   ├── services/              # 核心服务
 │   │   ├── ideScanner.ts      # IDE 探测、状态检测与按策略应用/恢复
 │   │   ├── provider.ts        # 协议转换与连接测试
+│   │   ├── proxy.ts           # 本地转发网关（OpenAI/Anthropic 双协议入站与转发）
+│   │   ├── proxyTranslate.ts  # 网关的纯函数协议转换（含 SSE 流式）
 │   │   ├── backup.ts          # 备份与恢复（原子写入）
 │   │   ├── snapshot.ts        # 快照管理
 │   │   ├── crypto.ts          # 自有存储的 AES-256-GCM 加密与脱敏
@@ -215,6 +229,7 @@ CodeSwitch/
 │   │   ├── tomlStore.ts       # TOML 配置读写（Codex）
 │   │   ├── envStore.ts        # .env KEY=VALUE 读写（Gemini CLI）
 │   │   ├── processGuard.ts    # 写入前检测目标 IDE 进程是否运行
+│   │   ├── paths.ts           # 自定义数据目录管理与迁移
 │   │   ├── store.ts           # electron-store 持久化
 │   │   └── logger.ts          # 内存缓冲 + 按日文件落盘日志
 │   └── shared/types.ts        # 跨进程共享类型定义
@@ -246,6 +261,7 @@ CodeSwitch/
 - **原子写入**：文件写入采用「写临时文件 + 原子替换」策略，失败自动回滚。
 - **写入前守卫**：SQLite / TOML 类 IDE 写入前会检测其进程是否在运行，未关闭时拒绝写入，避免配置被覆盖或损坏。
 - **本机测试**：连接测试直接在本机发起，不经中转服务器。
+- **网关仅本机监听**：本地转发网关只绑定 `127.0.0.1`，需要随机 token 才能访问 API（`/health` 除外），并校验 Host / Origin 防 DNS rebinding 与跨域；转发时目标供应商的明文 Key 仅在内存中用于请求上游，绝不回显给客户端或写入日志。
 
 > 由于加密密钥绑定设备指纹，加密后的数据在其他机器上无法解密，请在同一台设备上使用与迁移。
 
@@ -258,13 +274,15 @@ CodeSwitch/
 3. **辅助配置**：对于 GitHub Copilot 等无法安全直写的 IDE，点击「生成配置」获取对应格式的文本，一键复制后按提示在 IDE 设置界面手动粘贴。
 4. **恢复默认**：在 IDE 详情或首页点击「恢复默认」，将配置还原为官方默认或此前的备份（危险操作需二次确认）。
 5. **快照**：在「快照」页面保存当前所有 IDE 的供应商绑定，之后可一键切换。
-6. **设置**：在「设置」页面切换主题、语言、开机自启、数据目录，或检查更新。
+6. **本地转发网关**：在「设置 > 本地转发网关」启用并选定目标供应商，获得形如 `http://127.0.0.1:<port>` 的地址与访问 token；将任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）指向该地址并携带 token，即可复用同一份供应商配置（OpenAI / Anthropic 互转）。
+7. **设置**：在「设置」页面切换主题、语言、开机自启、本地转发网关、数据目录，或重置与检查更新。
 
 ---
 
 ## 注意事项
 
 - 多数 IDE 已支持一键写入；仅少数（如 GitHub Copilot）因密钥存于系统级密钥库而无法安全直写，需通过「生成配置」手动粘贴。
+- Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 `state.vscdb` 也无法绕过）；免费版可在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline / Continue 等 OpenAI 兼容扩展指向网关地址，即可免订阅使用自定义供应商。
 - 数据库 / TOML 类 IDE（Cursor、Windsurf、Trae、Kiro、CodeBuddy、Qoder、Codex）写入前必须先完全关闭对应 IDE，否则会被拒绝写入。其中 Cursor 还需 Pro 及以上订阅才支持自定义 API。
 - 若选择的协议与目标 IDE 不兼容（例如某 IDE 仅支持 OpenAI 协议却应用了 Anthropic 供应商），应用前会给出明确提示。
 - 应用或恢复配置后，通常需要重启对应 IDE（或重开终端）才能生效。
