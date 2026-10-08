@@ -39,7 +39,13 @@ export async function applySnapshot(id: string): Promise<OpResult> {
     if (!known.has(ideId)) { skipped++; continue }
     const r = await resetIDE(ideId)
     if (r.canceled) continue
-    if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'reset-failed'}`)
+    // 已绑定但当前未安装的 IDE（live 绑定会残留，pruneStaleIdeBindings 只清注册表下架项）：
+    // 重置阶段本就无事可做（locateExisting 为空 → msg.ide.notFound），绝不能计入失败，
+    // 否则只要有一个残留绑定就会把一次全部成功的快照应用误报为 applyFailed。
+    if (!r.ok) {
+      if (r.code === 'msg.ide.notFound') { skipped++; continue }
+      errors.push(`${ideId}: ${r.code ?? 'reset-failed'}`)
+    }
   }
   // 再按快照绑定应用：不可写 IDE（notWritable / canceled）跳过，不计失败
   for (const [ideId, binding] of Object.entries(snap.ideBindings)) {
