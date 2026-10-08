@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NGrid, NGi, NCard, NTag, NButton, NSelect, NSpace, NEmpty, NInput,
@@ -15,7 +15,7 @@ import {
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
 import { useResult } from '../composables/useResult'
-import type { IDEState, OpResult } from '../../electron/shared/types'
+import type { IDEState, OpResult, Provider, Protocol } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
@@ -54,18 +54,45 @@ const statusMeta = (s: IDEState['status']) => {
   }
 }
 
-const providerOptions = computed(() =>
-  store.providers.map((p) => ({ label: `${p.name} (${p.protocol === 'openai' ? 'OpenAI' : 'Anthropic'})`, value: p.id }))
-)
+const providerOption = (p: Provider) => ({ label: `${p.name} (${p.protocol === 'openai' ? 'OpenAI' : 'Anthropic'})`, value: p.id })
 
-// 仅"已安装 + 支持自动写入"的 IDE 才纳入批量应用候选
-const autoIdeOptions = computed(() =>
-  store.ides.filter((i) => i.installed && i.capability === 'auto').map((i) => ({ label: i.name, value: i.id }))
-)
+const providerOptions = computed(() => store.providers.map(providerOption))
+
+/** 协议兼容的供应商：Claude Code 等单一协议 IDE 选到不兼容供应商会被后端拦截，前端先滤掉 */
+const compatProviders = (protocols: Protocol[] | undefined): Provider[] =>
+  store.providers.filter((p) => !protocols || !protocols.length || protocols.includes(p.protocol))
+
+const applyProviderOptions = computed(() => compatProviders(applyTarget.value?.protocols).map(providerOption))
+const genProviderOptions = computed(() => compatProviders(genIde.value?.protocols).map(providerOption))
+
+/** 默认选中项：已有绑定且协议兼容则沿用，否则退到首个兼容供应商 */
+function pickProvider(ide: IDEState): string | undefined {
+  const bound = ide.currentProviderId ? store.providers.find((p) => p.id === ide.currentProviderId) : undefined
+  if (bound && ide.protocols.includes(bound.protocol)) return bound.id
+  return compatProviders(ide.protocols)[0]?.id
+}
+
+/** 写入/生成入口的禁用判定：按协议兼容而非供应商总数（单一协议 IDE 否则点开是空列表） */
+const hasCompatProvider = (ide: IDEState): boolean => compatProviders(ide.protocols).length > 0
+
+// 仅"已安装 + 支持自动写入"的 IDE 才纳入批量应用候选；选定供应商后再按协议筛掉不兼容项
+const autoIdeOptions = computed(() => {
+  const proto = store.providers.find((p) => p.id === batchProviderId.value)?.protocol
+  return store.ides
+    .filter((i) => i.installed && i.capability === 'auto')
+    .filter((i) => !proto || i.protocols.includes(proto))
+    .map((i) => ({ label: i.name, value: i.id }))
+})
+
+// 切换供应商后剔除已勾选但不兼容的目标，避免批量任务里埋下必然失败项
+watch(batchProviderId, () => {
+  const valid = new Set(autoIdeOptions.value.map((o) => o.value))
+  batchIdeIds.value = batchIdeIds.value.filter((id) => valid.has(id))
+})
 
 function openApply(ide: IDEState) {
   applyTarget.value = ide
-  selectedProviderId.value = ide.currentProviderId ?? undefined
+  selectedProviderId.value = pickProvider(ide)
   modalShow.value = true
   // 预判：整库/整文件回写型 IDE 若正在运行，先给出弱提示（真正拦截在 confirmApply）
   if (ide.running) message.warning(t('home.closeIdeConfirm', { name: ide.name }))
@@ -100,7 +127,7 @@ async function confirmApply() {
 
 function openGenerate(ide: IDEState) {
   genIde.value = ide
-  genProviderId.value = ide.currentProviderId ?? store.providers[0]?.id
+  genProviderId.value = pickProvider(ide)
   genText.value = ''
   genTargetPath.value = ''
   genShow.value = true
@@ -310,11 +337,11 @@ function batchReset() {
           </div>
 
           <div class="ide-actions">
-            <n-button v-if="ide.capability === 'auto'" size="small" type="primary" :disabled="!ide.installed || store.providers.length === 0" @click="openApply(ide)">
+            <n-button v-if="ide.capability === 'auto'" size="small" type="primary" :disabled="!ide.installed || !hasCompatProvider(ide)" @click="openApply(ide)">
               <template #icon><n-icon :component="IconCheckmarkDone" :size="14" /></template>
               {{ t('common.apply') }}
             </n-button>
-            <n-button v-else-if="ide.capability === 'assist'" size="small" type="primary" :disabled="!ide.installed || store.providers.length === 0" @click="openGenerate(ide)">
+            <n-button v-else-if="ide.capability === 'assist'" size="small" type="primary" :disabled="!ide.installed || !hasCompatProvider(ide)" @click="openGenerate(ide)">
               <template #icon><n-icon :component="IconCheckmarkDone" :size="14" /></template>
               {{ t('home.generate') }}
             </n-button>
@@ -339,7 +366,8 @@ function batchReset() {
         </div>
         <div>
           <div class="form-label">{{ t('providers.name') }}</div>
-          <n-select v-model:value="selectedProviderId" :options="providerOptions" :placeholder="t('home.selectProvider')" />
+          <n-select v-model:value="selectedProviderId" :options="applyProviderOptions" :placeholder="t('home.selectProvider')" />
+          <div v-if="!applyProviderOptions.length" class="empty-hint">{{ t('home.noCompatibleProvider') }}</div>
         </div>
         <n-space justify="end">
           <n-button @click="modalShow = false">{{ t('common.cancel') }}</n-button>
@@ -357,7 +385,8 @@ function batchReset() {
         </div>
         <div>
           <div class="form-label">{{ t('providers.name') }}</div>
-          <n-select v-model:value="genProviderId" :options="providerOptions" :placeholder="t('home.selectProvider')" />
+          <n-select v-model:value="genProviderId" :options="genProviderOptions" :placeholder="t('home.selectProvider')" />
+          <div v-if="!genProviderOptions.length" class="empty-hint">{{ t('home.noCompatibleProvider') }}</div>
         </div>
         <div v-if="genIde?.noteKey" class="ide-note">{{ t(genIde.noteKey) }}</div>
         <n-button size="small" :loading="generating" @click="confirmGenerate">{{ t('home.generate') }}</n-button>
@@ -387,6 +416,7 @@ function batchReset() {
             :max-tag-count="6"
             :placeholder="t('home.selectIdes')"
           />
+          <div v-if="batchProviderId && !autoIdeOptions.length" class="empty-hint">{{ t('home.noCompatibleIde') }}</div>
         </div>
         <div>
           <div class="form-label">{{ t('providers.name') }}</div>

@@ -30,7 +30,7 @@ import type { Provider, ProxyConfig, ProxyStatus, OpResult } from '../shared/typ
  *
  * 安全（Alex-H4）：
  *  - 本地随机 token 鉴权：启动时生成/读取，仅 CodeSwitch 内部与用户显式配置知晓；
- *    API 路由要求 Authorization: Bearer <token> 或 x-codeswitch-token 头（或 ?token=）；
+ *    API 路由要求 Authorization: Bearer <token>、x-codeswitch-token 头、x-api-key 头或 ?token=；
  *  - CORS 由 * 收紧为回显受控 Origin（仅本机来源），并处理预检；
  *  - 校验 Host/Origin 防 DNS rebinding（仅接受 127.0.0.1 / localhost / ::1）。
  *
@@ -207,7 +207,12 @@ function applyCors(req: http.IncomingMessage, res: http.ServerResponse): void {
   // 不受控 Origin 不回显，浏览器侧即视为跨域被拒
 }
 
-/** token 鉴权：Bearer / x-codeswitch-token / ?token= 三种携带方式 */
+/**
+ * token 鉴权：Bearer / x-codeswitch-token / x-api-key / ?token= 四种携带方式。
+ * x-api-key 为 Anthropic 客户端唯一自带的鉴权头（Claude Code 等只会把它写进该头），
+ * 否则把网关地址填进 ANTHROPIC_BASE_URL 会必然 401，跨协议接入通路走不通。
+ * 仅在本机监听 + Host 校验 + 随机 token 前提下接受，上游请求另有真实 Key，不回透。
+ */
 function isAuthed(req: http.IncomingMessage, url: URL | null): boolean {
   const token = store.get('proxyToken')
   if (!token) return true // 理论上启动时已生成；无 token 时不阻断
@@ -215,6 +220,8 @@ function isAuthed(req: http.IncomingMessage, url: URL | null): boolean {
   if (typeof auth === 'string' && auth.startsWith('Bearer ') && auth.slice(7).trim() === token) return true
   const x = req.headers['x-codeswitch-token']
   if (typeof x === 'string' && x === token) return true
+  const ak = req.headers['x-api-key']
+  if (typeof ak === 'string' && ak.trim() === token) return true
   if (url && url.searchParams.get('token') === token) return true
   return false
 }
@@ -293,7 +300,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
   applyCors(req, res)
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-codeswitch-token, anthropic-version')
+    res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, x-codeswitch-token, x-api-key, anthropic-version')
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     res.setHeader('Access-Control-Max-Age', '86400')
     res.statusCode = 204

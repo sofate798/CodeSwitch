@@ -1,4 +1,5 @@
 import { store } from './store'
+import { IDE_REGISTRY } from '../adapters/registry'
 import { applyProvider, resetIDE } from './ideScanner'
 import { log } from './logger'
 import type { Snapshot, OpResult } from '../shared/types'
@@ -30,8 +31,12 @@ export async function applySnapshot(id: string): Promise<OpResult> {
   if (!snap) return { ok: false, code: 'msg.snapshot.notFound' }
   const errors: string[] = []
   let applied = 0
+  let skipped = 0
+  // 已下架适配器（快照/导入数据里的历史 IDE）归入跳过，不能计失败：它们本就无法再被管理
+  const known = new Set(IDE_REGISTRY.map((d) => d.id))
   // 先全部重置：resetIDE 现返回 OpResult，canceled=true 表示跳过（manual/assist），不计失败
   for (const ideId of Object.keys(store.get('ideBindings'))) {
+    if (!known.has(ideId)) { skipped++; continue }
     const r = await resetIDE(ideId)
     if (r.canceled) continue
     if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'reset-failed'}`)
@@ -39,6 +44,7 @@ export async function applySnapshot(id: string): Promise<OpResult> {
   // 再按快照绑定应用：不可写 IDE（notWritable / canceled）跳过，不计失败
   for (const [ideId, binding] of Object.entries(snap.ideBindings)) {
     if (!binding.providerId) continue
+    if (!known.has(ideId)) { skipped++; continue }
     const r = await applyProvider(ideId, binding.providerId)
     if (r.canceled || r.code === 'msg.ide.notWritable') continue
     if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'apply-failed'}`)
@@ -47,7 +53,7 @@ export async function applySnapshot(id: string): Promise<OpResult> {
   log(
     errors.length === 0 ? 'info' : 'warn',
     'snapshot-apply',
-    `${snap.name} applied=${applied}${errors.length ? ' failed=' + errors.join('; ') : ''}`
+    `${snap.name} applied=${applied} skipped=${skipped}${errors.length ? ' failed=' + errors.join('; ') : ''}`
   )
   // 失败仅回传消息码 + 失败数（errors 内含原始码，不外透以免泄漏 i18n key，明细已落日志）
   return errors.length === 0

@@ -30,6 +30,7 @@ export default {
       cursor: "Cursor's built-in AI only allows custom endpoints on Pro or higher (an official server-side restriction; writing state.vscdb directly cannot bypass it). On the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Fully close Cursor before writing.",
       windsurf: 'Windsurf stores custom model credentials in its app database, located via adaptive probing. Close Windsurf before writing.',
       trae: 'Trae stores credentials in its app database, located via adaptive probing. Close Trae before writing.',
+      zed: 'Zed keeps model settings in the language_models.openai block of settings.json and supports OpenAI only; close Zed before the whole file is rewritten, otherwise it overwrites on exit from its in-memory config.',
       kiro: 'Kiro stores credentials in its app database, located via adaptive probing. Close Kiro before writing.',
       codebuddy: 'CodeBuddy stores credentials in its app database, located via adaptive probing. Close CodeBuddy before writing.',
       qoder: 'Qoder stores credentials in its app database, located via adaptive probing. Close Qoder before writing.',
@@ -58,6 +59,8 @@ export default {
     batchApplyDone: 'Applied to {count} IDEs',
     batchApplyNoTarget: 'Select at least one IDE and one provider',
     selectIdes: 'Select IDEs (auto-configurable only)',
+    noCompatibleProvider: "No provider matches this IDE's protocol; create one with the right protocol on the Providers page first",
+    noCompatibleIde: "No auto-configurable IDE matches this provider's protocol; pick another provider",
     batchReset: 'Reset All',
     batchResetTitle: 'Reset All IDEs',
     batchResetConfirm: "Reset all installed IDEs' custom provider configs to official defaults (manual-config IDEs are skipped). Each IDE is backed up first. Continue?",
@@ -217,7 +220,7 @@ export default {
       tokenHide: 'Hide',
       tokenCopied: 'Token copied',
       tokenFailed: 'Failed to read the token',
-      tokenHint: 'Requests to the gateway must carry Authorization: Bearer <token>; the x-codeswitch-token header and ?token= query parameter are also supported',
+      tokenHint: 'Requests to the gateway must carry Authorization: Bearer <token>; the x-codeswitch-token and x-api-key headers and the ?token= query parameter are also supported. Anthropic clients (e.g. Claude Code) just put the token in the API Key field',
       hint: 'When enabled, exposes an OpenAI/Anthropic-compatible endpoint on 127.0.0.1 with cross-protocol translation and streaming.\n• Any client that allows a custom Base URL (Cline / Continue / Roo, Codex, Gemini CLI, scripts) can use the URL above to reuse the current provider.\n• Cursor Free blocks custom endpoints for its built-in AI on the server side; install a free OpenAI-compatible extension (e.g. Cline / Continue) inside Cursor and point its Base URL to this gateway to use custom providers without a subscription.'
     }
   },

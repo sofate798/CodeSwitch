@@ -197,6 +197,8 @@ export interface IDEState {
   lastBackup: number | null
   /** 提示文本的 i18n key（来自适配器静态提示或扫描期动态错误）；前端用 t(noteKey) 渲染 */
   noteKey?: string
+  /** 该 IDE 支持的供应商协议；前端据此过滤可选供应商，避免选到必然被后端拒绝的组合 */
+  protocols: Protocol[]
   /** 自动化能力，UI 据此决定按钮态与交互 */
   capability: IDECapability
   /** 目标 IDE 当前是否在运行（写入前需关闭） */

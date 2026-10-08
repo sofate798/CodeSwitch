@@ -190,6 +190,7 @@ export async function scanIDEs(): Promise<IDEState[]> {
       currentProviderId,
       lastBackup: store.get('backups').find((b) => b.ideId === ide.id)?.timestamp ?? null,
       noteKey,
+      protocols: ide.protocols,
       capability,
       running
     })

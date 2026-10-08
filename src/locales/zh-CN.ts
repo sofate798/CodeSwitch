@@ -30,6 +30,7 @@ export default {
       cursor: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。',
       windsurf: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。',
       trae: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。',
+      zed: 'Zed 将模型配置写在 settings.json 的 language_models.openai 段，仅支持 OpenAI 协议；整文件重写前请先关闭 Zed，避免其退出时用内存中的配置覆盖。',
       kiro: 'Kiro 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Kiro。',
       codebuddy: 'CodeBuddy 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 CodeBuddy。',
       qoder: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。',
@@ -58,6 +59,8 @@ export default {
     batchApplyDone: '已应用到 {count} 个 IDE',
     batchApplyNoTarget: '请选择至少一个 IDE 和一个供应商',
     selectIdes: '选择 IDE（仅显示支持自动配置的）',
+    noCompatibleProvider: '没有与该 IDE 协议兼容的供应商，请先在「供应商」页新建对应协议的供应商',
+    noCompatibleIde: '没有与该供应商协议兼容且支持自动写入的 IDE，请改选其他供应商',
     batchReset: '全部恢复默认',
     batchResetTitle: '全部恢复默认',
     batchResetConfirm: '将把所有已安装 IDE 的自定义供应商配置恢复为官方默认（手动配置型 IDE 自动跳过），每个 IDE 会先自动备份。确定继续？',
@@ -217,7 +220,7 @@ export default {
       tokenHide: '隐藏',
       tokenCopied: '已复制令牌',
       tokenFailed: '读取令牌失败',
-      tokenHint: '请求网关需携带 Authorization: Bearer <令牌>；也支持 x-codeswitch-token 请求头或 ?token= 参数',
+      tokenHint: '请求网关需携带 Authorization: Bearer <令牌>；也支持 x-codeswitch-token / x-api-key 请求头或 ?token= 参数。Anthropic 客户端（如 Claude Code）把令牌填在 API Key 位即可',
       hint: '启用后在本机 127.0.0.1 提供 OpenAI/Anthropic 兼容接口，支持两种协议互转与流式输出。\n• 任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）填入上面的地址即可复用当前供应商。\n• Cursor 免费版的自带 AI 被官方服务端限制、无法自定义端点；可在 Cursor 内安装免费的 OpenAI 兼容扩展（如 Cline / Continue），把 Base URL 指向本网关，即可免订阅使用自定义供应商。'
     }
   },

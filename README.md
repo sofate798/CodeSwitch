@@ -103,7 +103,7 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 - 入站路由：`GET /health`（健康检查，无需 token）、`GET /v1/models`、`POST /v1/chat/completions`（OpenAI 入站）、`POST /v1/messages`（Anthropic 入站）。
 - 同协议直接透传，跨协议（OpenAI ↔ Anthropic）自动转换请求 / 响应，含流式 SSE。
-- 安全：仅监听 `127.0.0.1`，启动时生成随机 token（`Authorization: Bearer` / `x-codeswitch-token` / `?token=` 三种携带方式）；CORS 收紧为回显本机 Origin，并校验 Host 防 DNS rebinding；请求体上限 32 MB（超限拒收返回 413）；客户端中途断开时主动 abort 进行中的上游请求。
+- 安全：仅监听 `127.0.0.1`，启动时生成随机 token（`Authorization: Bearer` / `x-codeswitch-token` / `x-api-key` / `?token=` 四种携带方式，Anthropic 客户端可直接把令牌填在 API Key 位）；CORS 收紧为回显本机 Origin，并校验 Host 防 DNS rebinding；请求体上限 32 MB（超限拒收返回 413）；客户端中途断开时主动 abort 进行中的上游请求。
 - 已知限制：跨协议的工具调用（tools / tool_choice）仅在**非流式**请求 / 响应下完整映射，流式（SSE）仅保证纯文本正确。
 
 ---
@@ -287,7 +287,7 @@ CodeSwitch/
 - 内置支持的 IDE 均已支持一键写入；若某 IDE 的凭证槽位无法自动定位，会自动降级为辅助配置，需通过「生成配置」手动粘贴。
 - Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 `state.vscdb` 也无法绕过）；免费版可在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline / Continue 等 OpenAI 兼容扩展指向网关地址，即可免订阅使用自定义供应商。
 - 数据库 / TOML 类 IDE（Cursor、Windsurf、Trae、Kiro、CodeBuddy、Qoder、Codex）写入前必须先完全关闭对应 IDE，否则会被拒绝写入。其中 Cursor 还需 Pro 及以上订阅才支持自定义 API。
-- 若选择的协议与目标 IDE 不兼容（例如某 IDE 仅支持 OpenAI 协议却应用了 Anthropic 供应商），应用前会给出明确提示。
+- 供应商下拉与批量应用目标只会列出与目标 IDE **协议兼容**的选项（如 Claude Code 仅接 Anthropic 供应商）；若需给单一协议 IDE 接另一种协议的供应商，可把本地转发网关作为中转（Anthropic 客户端把网关令牌填在 API Key 位即可）。
 - 应用或恢复配置后，通常需要重启对应 IDE（或重开终端）才能生效。
 - 因加密密钥绑定设备指纹，加密后的数据在其他机器上无法解密；若需跨机迁移供应商，请使用「导出 / 导入」功能。
 - 本项目 UI 强制规范：禁止使用任何 Emoji 字符，所有图标均来自矢量图标组件库。

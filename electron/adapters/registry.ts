@@ -120,7 +120,8 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
         baseUrl: 'language_models.openai.base_url',
         model: 'language_models.openai.default_model'
       }
-    }
+    },
+    noteKey: 'ide.note.zed'
     // Zed settings.json 为明文 JSON，支持一键写入（文件不存在时自动创建）
   },
   {

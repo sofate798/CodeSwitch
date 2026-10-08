@@ -3,6 +3,7 @@ import { app, shell, BrowserWindow, Tray, Menu, ipcMain } from 'electron'
 import './bootstrap'
 import path from 'node:path'
 import { registerIpc } from '../ipc/handlers'
+import { IDE_REGISTRY } from '../adapters/registry'
 import { initLogger, log } from '../services/logger'
 import { store } from '../services/store'
 import { autoStartProxy, stopProxy } from '../services/proxy'
@@ -274,6 +275,28 @@ function migrateLegacyCiphers(): void {
   }
 }
 
+// ---------------- 启动适配器对齐（清理已下架 IDE 的孤儿绑定） ----------------
+
+/**
+ * 注册表里被移除的 IDE（如早期的 GitHub Copilot）会在老用户数据里留下 ideBindings 孤儿键：
+ * 扫描结果不再包含它，但「删除前引用查询 / 快照应用」仍会读到并报「IDE 未找到」。
+ * 启动时按当前注册表剪除这些键（只动 CodeSwitch 自己的绑定记录，不碰 IDE 的配置文件）。
+ */
+function pruneStaleIdeBindings(): void {
+  try {
+    const bindings = store.get('ideBindings') as Record<string, unknown>
+    const known = new Set(IDE_REGISTRY.map((d) => d.id))
+    const stale = Object.keys(bindings).filter((id) => !known.has(id))
+    if (!stale.length) return
+    for (const id of stale) delete bindings[id]
+    store.set('ideBindings', bindings)
+    log('info', 'bindings-prune', `removed stale adapters: ${stale.join(', ')}`)
+  } catch (e) {
+    // 剪除失败不阻断启动：最差情况退回「快照应用报未找到」的旧行为
+    log('error', 'bindings-prune', `failed: ${String((e as Error)?.message ?? e)}`)
+  }
+}
+
 app.whenReady().then(() => {
   initLogger()
   registerIpc()
@@ -282,6 +305,7 @@ app.whenReady().then(() => {
   createTray()
   // 启动密钥迁移（旧→新重加密）
   migrateLegacyCiphers()
+  pruneStaleIdeBindings()
   // 若用户曾启用转发网关，开机自动拉起
   autoStartProxy().catch((e) => log('error', 'proxy', `auto-start failed: ${(e as Error).message}`))
 
