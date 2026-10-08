@@ -208,6 +208,8 @@ export function registerIpc(): void {
       if (!s.installed) continue
       const r = await resetIDE(s.id)
       if (r.canceled) continue
+      // 已安装但没有配置文件（notFound）＝本无可恢复，跳过；否则“全部失败”会被这类 IDE 误触发
+      if (!r.ok && r.code === 'msg.ide.notFound') continue
       if (r.ok) count++
       else failed++
     }
@@ -499,20 +501,25 @@ export function registerIpc(): void {
     let providerCount = 0
     for (const ep of Array.isArray(parsed.providers) ? parsed.providers : []) {
       if (!ep || typeof ep.name !== 'string' || (ep.protocol !== 'openai' && ep.protocol !== 'anthropic')) continue
-      providerCount++
-      const existing = list.find((p) => p.name === ep.name)
+      const name = ep.name.trim()
+      const existing = list.find((p) => p.name === name)
       if (existing) {
+        providerCount++
         if (ep.refId) idMap.set(ep.refId, existing.id)
         continue
       }
+      // .csnap 不可信：与 provider:import 同口径校验，不合格的内嵌供应商不入库（其绑定随之回落为默认）
+      const v = validateProviderInput({ name, protocol: ep.protocol, baseUrl: String(ep.baseUrl ?? ''), model: String(ep.model ?? ''), group: typeof ep.group === 'string' ? ep.group : '' })
+      if (!v.ok || !v.data.name || !v.data.baseUrl) continue
+      providerCount++
       const np: Provider = {
         id: randomUUID(),
-        name: ep.name,
-        protocol: ep.protocol as Protocol,
+        name: v.data.name,
+        protocol: v.data.protocol,
         apiKey: encrypt(String(ep.apiKey ?? '')),
-        baseUrl: String(ep.baseUrl ?? ''),
-        model: String(ep.model ?? ''),
-        group: typeof ep.group === 'string' && ep.group ? ep.group : undefined,
+        baseUrl: v.data.baseUrl,
+        model: v.data.model,
+        group: v.data.group || undefined,
         createdAt: now,
         updatedAt: now
       }
@@ -643,9 +650,18 @@ export function registerIpc(): void {
       log('warn', 'system:open-path', `rejected path outside allowed roots: ${targetPath}`)
       return
     }
-    // 文件存在则定位选中，否则打开其所在目录（绝不能对缺失路径调 openPath——会失败且违背注释意图）
-    if (fs.existsSync(targetPath)) shell.showItemInFolder(targetPath)
-    else shell.openPath(path.dirname(targetPath))
+    // 文件存在则定位选中；否则仅当父路径确为目录时才打开它。
+    // openPath 会用默认程序“执行”文件，父路径若是可执行文件（如 x.exe\nonexistent）绝不能交给它。
+    if (fs.existsSync(targetPath)) {
+      shell.showItemInFolder(targetPath)
+      return
+    }
+    const dir = path.dirname(targetPath)
+    try {
+      if (fs.statSync(dir).isDirectory()) shell.openPath(dir)
+    } catch {
+      // 父目录也不存在：无可打开
+    }
   })
 
   // 数据目录：获取当前生效目录与自定义目录

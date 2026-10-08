@@ -187,8 +187,13 @@ export async function configureProxy(patch: Partial<ProxyConfig>): Promise<OpRes
   if (typeof p.enabled === 'boolean') clean.enabled = p.enabled
   if (Number.isInteger(p.port) && p.port! >= 1024 && p.port! <= 65535) clean.port = p.port
   if (p.providerId === null || typeof p.providerId === 'string') clean.providerId = p.providerId
-  const next: ProxyConfig = { ...cfg(), ...clean }
+  const prev = cfg()
+  const next: ProxyConfig = { ...prev, ...clean }
   store.set('proxy', next)
+  // 只换转发目标时无需重启：handle 每个请求都实时读取目标；重启会掐断进行中的流式响应
+  if (next.enabled && server?.listening && prev.port === next.port) {
+    return { ok: true, code: 'msg.proxy.started', args: { port: next.port }, data: proxyStatus() }
+  }
   if (next.enabled) return startProxy(next.port)
   await stopProxy()
   return { ok: true, code: 'msg.proxy.stopped', data: proxyStatus() }

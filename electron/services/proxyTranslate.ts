@@ -229,13 +229,13 @@ export function openaiRespToAnthropic(r: any): any {
 }
 
 /** 组装一条 OpenAI 流式分片（SSE data 行） */
-export function openaiChunk(delta: any, model: string, id: string): string {
+export function openaiChunk(delta: any, model: string, id: string, finishReason: string | null = null): string {
   const payload = {
     id,
     object: 'chat.completion.chunk',
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, delta, finish_reason: null }]
+    choices: [{ index: 0, delta, finish_reason: finishReason }]
   }
   return `data: ${JSON.stringify(payload)}\n\n`
 }
@@ -306,6 +306,9 @@ export function anthropicStreamToOpenai(stream: SseStream, res: SseResponse, mod
       }
       if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) {
         res.write(openaiChunk({ content: ev.delta.text }, model, id))
+      } else if (ev.type === 'message_delta' && ev.delta?.stop_reason && !res.writableEnded) {
+        // OpenAI 客户端靠末块 finish_reason 判断截断（length）与正常结束（stop），不能只给 [DONE]
+        res.write(openaiChunk({}, model, id, mapStop(ev.delta.stop_reason)))
       } else if (ev.type === 'message_stop') {
         if (!res.writableEnded) {
           res.write('data: [DONE]\n\n')
@@ -334,11 +337,13 @@ export function openaiStreamToAnthropic(stream: SseStream, res: SseResponse, mod
   )
   res.write(anthEvent('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))
   let done = false
+  // 上游 finish_reason（length → max_tokens 等）必须透传，否则 Anthropic 客户端无法感知输出被截断
+  let stopReason = 'end_turn'
   const finish = () => {
     if (done || res.writableEnded) return
     done = true
     res.write(anthEvent('content_block_stop', { type: 'content_block_stop', index: 0 }))
-    res.write(anthEvent('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } }))
+    res.write(anthEvent('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 0 } }))
     res.write(anthEvent('message_stop', { type: 'message_stop' }))
     res.end()
   }
@@ -354,7 +359,10 @@ export function openaiStreamToAnthropic(stream: SseStream, res: SseResponse, mod
       }
       const delta = ev.choices?.[0]?.delta?.content
       if (delta) res.write(anthEvent('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } }))
-      if (ev.choices?.[0]?.finish_reason) finish()
+      if (ev.choices?.[0]?.finish_reason) {
+        stopReason = mapFinish(ev.choices[0].finish_reason)
+        finish()
+      }
     },
     finish
   )

@@ -338,7 +338,8 @@ function pruneStaleIdeBindings(): void {
  * 共用同一 userData（electron-store config.json 并发写有损坏风险）、网关端口 EADDRINUSE、
  * 双托盘图标。抢锁失败直接退出；已在运行的实例收到 second-instance 时唤起并聚焦主窗口。
  */
-if (!app.requestSingleInstanceLock()) {
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
@@ -350,6 +351,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(() => {
+  // app.quit() 是异步的，抢锁失败的第二实例仍可能走到 ready：此时绝不能再迁移密钥写 store、拉起网关、建托盘
+  if (!gotSingleInstanceLock) return
   initLogger()
   registerIpc()
   setupAutoUpdater()
@@ -372,6 +375,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  // 任何来源的退出（托盘外的 app.quit、更新安装等）都要放行窗口关闭，否则 close 被拦成“隐藏到托盘”而卡住退出
+  isQuiting = true
   stopProxy().catch(() => {})
 })
 
