@@ -45,13 +45,16 @@ export function writeEnvAtomic(file: string, updates: Record<string, string>): v
     }
     return line
   })
+  // 剔除因原文件结尾换行而 split 产生的末尾空元素，否则下面追加新键会落在它之后：
+  // 既会在已有内容与新增键之间插入多余空行，新建文件时（lines=['']）还会以空行开头。
+  while (next.length && next[next.length - 1] === '') next.pop()
   // 追加尚未出现的新键
   for (const [key, val] of Object.entries(updates)) {
     if (val === '' || seen.has(key)) continue
     next.push(`${key}=${val}`)
   }
   let text = next.join(eol)
-  if (!text.endsWith('\n')) text += eol
+  if (text && !text.endsWith('\n')) text += eol
   const tmp = `${file}.tmp-${process.pid}`
   try {
     fs.writeFileSync(tmp, text, 'utf8')
