@@ -32,7 +32,7 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 - **供应商管理**：新增、编辑、删除 AI 供应商，必须显式选择协议类型（OpenAI / Anthropic），支持分组、连接测试与 JSON 导入导出。
 - **一键应用与恢复**：对单个或全部 IDE 应用供应商配置；修改前自动备份，支持一键恢复官方默认设置与失败自动回滚。数据库 / TOML 类 IDE 写入前会检测其是否在运行，未关闭时拒绝写入以防配置被覆盖或损坏。
 - **配置生成与复制**：对无法自动定位凭证槽位而降级为辅助配置的 IDE，可一键生成对应格式的配置文本并复制，按提示在 IDE 设置界面手动粘贴。
-- **本地转发网关**：在 `127.0.0.1` 启动 OpenAI / Anthropic 双协议兼容的本地代理，把请求转发到选定供应商，支持两协议互转（含流式 SSE）与本地随机 token 鉴权、防 DNS rebinding。任何可自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）都可指向网关复用同一份供应商配置；Cursor 免费版自带 AI 被官方服务端封锁自定义端点，也可在 Cursor 内装免费的 OpenAI 兼容扩展指向网关，免订阅使用自定义供应商。
+- **本地转发网关**：在 `127.0.0.1` 启动 OpenAI / Anthropic 双协议兼容的本地代理，把请求转发到选定供应商，支持两协议互转（含流式 SSE）与本地随机 token 鉴权、防 DNS rebinding。任何可自定义 Base URL、走 Chat Completions 或 Messages 接口的客户端（Cline / Continue / Roo、Claude Code、脚本）都可指向网关复用同一份供应商配置（网关不提供 Responses API，现版 Codex 无法经网关接入）；Cursor 免费版自带 AI 被官方服务端封锁自定义端点，也可在 Cursor 内装免费的 OpenAI 兼容扩展指向网关，免订阅使用自定义供应商。
 - **统一错误契约**：所有桌面操作返回带消息码的结构化结果（OpResult），界面按当前语言渲染文案，失败绝不静默报成功；技术异常细节只落日志，不向 UI 外透原始错误串。
 - **快照管理**：保存当前所有 IDE 的供应商绑定状态，可随时一键切换回某个快照。
 - **备份中心**：按 IDE 归档历史备份（含 SQLite 的 `-wal` / `-shm` 附属文件），支持查看、恢复与删除。
@@ -46,20 +46,20 @@ CodeSwitch 是一款基于 Electron 的桌面工具，用于集中管理各类 A
 
 ## 支持的 IDE
 
-CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/registry.ts`](electron/adapters/registry.ts)），当前内置以下 11 款 IDE，均支持一键写入（凭证槽位无法自动定位时自动降级为「生成配置 + 手动粘贴」的辅助方式）：
+CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/registry.ts`](electron/adapters/registry.ts)），当前内置以下 11 款 IDE，除 Zed、Cursor 为辅助配置外均支持一键写入（凭证槽位无法自动定位时自动转入「生成配置」，按提示在 IDE 内手动填写）：
 
 | IDE | 支持协议 | 配置载体 | 自动化能力 |
 | --- | --- | --- | --- |
-| Cursor | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，凭证 DPAPI 加密） | 一键写入（需 Pro 及以上订阅，写入前关闭 Cursor；免费版可改用本地转发网关 + Cline/Continue 扩展） |
+| Cursor | OpenAI / Anthropic | Cursor 自身加密的 SecretStorage（外部无法代写） | 辅助配置（生成三要素，在 Cursor 设置 > Models 中填写；自带 AI 自定义端点需 Pro 及以上订阅，免费版可改用本地转发网关 + Cline/Continue 扩展） |
 | Windsurf | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测凭证行） | 一键写入（写入前关闭 Windsurf） |
 | Trae | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Trae） |
-| Zed | OpenAI / Anthropic | `settings.json`（明文 JSON） | 一键写入（文件不存在时自动创建） |
+| Zed | OpenAI | `settings.json`（明文 JSON） | 辅助配置（生成 `language_models.openai_compatible` 片段；Key 按 Zed 要求在其 Agent 设置或环境变量 `CODESWITCH_API_KEY` 中填写） |
 | Kiro | OpenAI / Anthropic | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Kiro） |
 | CodeBuddy | OpenAI | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 CodeBuddy） |
 | Qoder | OpenAI | 应用数据库 `state.vscdb`（SQLite，自适应探测） | 一键写入（写入前关闭 Qoder） |
-| Antigravity | OpenAI / Anthropic | `config.json`（明文 JSON） | 一键写入（若控制台另有校验可能需界面确认） |
+| Antigravity | OpenAI | `config.json`（明文 JSON） | 一键写入（若控制台另有校验可能需界面确认） |
 | Gemini CLI | OpenAI | `~/.gemini/.env`（KEY=VALUE 文本） | 一键写入（需 CLI 支持 OpenAI 兼容端点方生效） |
-| Codex CLI | OpenAI | `~/.codex/config.toml` + `auth.json` | 一键写入（写入 `model_provider=codeswitch`，Key 存入 auth.json） |
+| Codex CLI | OpenAI | `~/.codex/config.toml` | 一键写入（写入 `model_provider=codeswitch` 与 `wire_api="responses"` 的 provider 段，Key 为 `experimental_bearer_token`；供应商须支持 Responses API） |
 | Claude Code | Anthropic | `~/.claude/settings.json` 的 `env` 段（明文 JSON） | 一键写入（写 `ANTHROPIC_API_KEY / BASE_URL / MODEL`，重启 CLI 生效；OpenAI 供应商可经本地网关跨协议接入） |
 
 ### 配置写入策略
@@ -68,9 +68,9 @@ CodeSwitch 采用数据驱动的适配器注册表（见 [`electron/adapters/reg
 
 | 策略 | 载体 | 说明 |
 | --- | --- | --- |
-| `json` | 明文 JSON（Zed / Antigravity / Claude Code） | 按点路径写入字段，文件不存在时可自动创建 |
-| `sqlite` | VS Code 系 `state.vscdb`（Cursor / Windsurf / Trae / Kiro / CodeBuddy / Qoder） | 用 sql.js 整库读写 `ItemTable`；已知行键直接定位，未知 schema 用 `probeContains` 自适应探测凭证行；apiKey 镜像原字段的 DPAPI 加密形态 |
-| `toml` | `config.toml` + 可选 `auth.json`（Codex） | 写入表段与顶层标量，密钥单独落到 JSON secret 文件 |
+| `json` | 明文 JSON（Antigravity / Claude Code；Zed 仅用于恢复默认时清理旧版残留） | 按点路径写入字段（兼容注释与尾逗号），文件不存在时可自动创建 |
+| `sqlite` | VS Code 系 `state.vscdb`（Windsurf / Trae / Kiro / CodeBuddy / Qoder；Cursor 仅用于恢复默认时清理旧版残留） | 用 sql.js 整库读写 `ItemTable`；已知行键直接定位，未知 schema 用 `probeContains` 自适应探测凭证行；apiKey 以明文写入（CodeSwitch 自身的加密密钥目标 IDE 无法解密） |
+| `toml` | `config.toml`（Codex） | 整段替换本应用独占的 provider 表段并写顶层标量；旧版写入 `auth.json` 的 Key 仅在确认为本应用所写时于应用/恢复默认时清除 |
 | `env` | `.env`（Gemini CLI） | 以 `KEY=VALUE` 形式写入环境变量 |
 
 > 说明：SQLite / TOML 类 IDE 采用「整库 / 整文件回写」，写入前必须先完全关闭对应 IDE，否则其退出时可能覆盖或损坏配置——CodeSwitch 会在检测到进程运行时拒绝写入并提示。当某 IDE 的凭证行无法自动定位时，可改用「生成配置」获取可复制的配置文本手动设置。
@@ -273,11 +273,11 @@ CodeSwitch/
 ## 使用说明
 
 1. **添加供应商**：进入「供应商」页面，填写名称、选择协议类型（OpenAI / Anthropic）、填入 API Key、Base URL 与 Model，保存。可点击「连接测试」验证可用性。
-2. **应用配置**：在首页选中目标 IDE，选择要应用的供应商并点击「应用」。应用前会自动备份原配置；若目标为数据库 / TOML 类 IDE（如 Cursor、Windsurf、Codex），需先完全关闭该 IDE。
+2. **应用配置**：在首页选中目标 IDE，选择要应用的供应商并点击「应用」。应用前会自动备份原配置；若目标为数据库 / TOML 类 IDE（如 Windsurf、Codex），需先完全关闭该 IDE。辅助配置型 IDE（Zed、Cursor）点击「生成配置」，按提示在 IDE 内填写。
 3. **辅助配置**：对凭证槽位无法自动定位而降级为辅助配置的 IDE，点击「生成配置」获取对应格式的文本，一键复制后按提示在 IDE 设置界面手动粘贴。
 4. **恢复默认**：在 IDE 详情或首页点击「恢复默认」，将配置还原为官方默认或此前的备份（危险操作需二次确认）。
 5. **快照**：在「快照」页面保存当前所有 IDE 的供应商绑定，之后可一键切换。
-6. **本地转发网关**：在「设置 > 本地转发网关」启用并选定目标供应商，获得形如 `http://127.0.0.1:<port>` 的地址与访问 token；将任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）指向该地址并携带 token，即可复用同一份供应商配置（OpenAI / Anthropic 互转）。
+6. **本地转发网关**：在「设置 > 本地转发网关」启用并选定目标供应商，获得形如 `http://127.0.0.1:<port>` 的地址与访问 token；将任意支持自定义 Base URL 的 Chat Completions / Messages 客户端（Cline / Continue / Roo、Claude Code、脚本）指向该地址并携带 token，即可复用同一份供应商配置（OpenAI / Anthropic 互转）。
 7. **设置**：在「设置」页面切换主题、语言、开机自启、本地转发网关、数据目录，或重置与检查更新。
 
 ---
@@ -285,8 +285,8 @@ CodeSwitch/
 ## 注意事项
 
 - 内置支持的 IDE 均已支持一键写入；若某 IDE 的凭证槽位无法自动定位，会自动降级为辅助配置，需通过「生成配置」手动粘贴。
-- Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 `state.vscdb` 也无法绕过）；免费版可在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline / Continue 等 OpenAI 兼容扩展指向网关地址，即可免订阅使用自定义供应商。
-- 数据库 / TOML 类 IDE（Cursor、Windsurf、Trae、Kiro、CodeBuddy、Qoder、Codex）写入前必须先完全关闭对应 IDE，否则会被拒绝写入。其中 Cursor 还需 Pro 及以上订阅才支持自定义 API。
+- Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制）；免费版可在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline / Continue 等 OpenAI 兼容扩展指向网关地址，即可免订阅使用自定义供应商。
+- 数据库 / TOML 类 IDE（Windsurf、Trae、Kiro、CodeBuddy、Qoder、Codex）写入前、以及对 Cursor 执行「恢复默认」前，必须先完全关闭对应 IDE，否则会被拒绝写入。
 - 供应商下拉与批量应用目标只会列出与目标 IDE **协议兼容**的选项（如 Claude Code 仅接 Anthropic 供应商）；若需给单一协议 IDE 接另一种协议的供应商，可把本地转发网关作为中转（Anthropic 客户端把网关令牌填在 API Key 位即可）。
 - 应用或恢复配置后，通常需要重启对应 IDE（或重开终端）才能生效。
 - 因加密密钥绑定设备指纹，加密后的数据在其他机器上无法解密；若需跨机迁移供应商，请使用「导出 / 导入」功能。

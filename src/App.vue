@@ -204,8 +204,11 @@ function nav(path: string) { router.push(path) }
 .sidebar-footer { padding: 10px; }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* Windows 原生窗口按钮覆盖层压在右上角（实测 136px 宽），右内边距须让出它，否则刷新按钮被盖住点不到；
+   无覆盖层的平台 env 取回退值，结果仍为 16px */
 .topbar {
-  height: 48px; border-bottom: 1px solid var(--border); padding: 0 16px 0 20px;
+  height: 48px; border-bottom: 1px solid var(--border);
+  padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px) 0 20px;
   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
   -webkit-app-region: drag;
 }

@@ -36,6 +36,11 @@ export function writeTomlAtomic(file: string, data: Record<string, any>): void {
   }
 }
 
+/** 序列化为 TOML 文本（生成配置预览用，与落盘同一序列化器，保证嵌套表段语法正确） */
+export function tomlToText(data: Record<string, any>): string {
+  return stringify(data)
+}
+
 /** 在对象上按路径设置嵌套表段，如 ['model_providers','codeswitch'] -> { model_providers: { codeswitch: {...} } } */
 export function ensureTable(root: Record<string, any>, tablePath: string[]): Record<string, any> {
   let cur = root

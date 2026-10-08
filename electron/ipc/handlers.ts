@@ -150,7 +150,8 @@ function validateProviderInput(input: Partial<Provider> & { protocol: Protocol }
     const dup = list.some((p) => p.name === name && p.id !== editingId)
     if (dup) return fail('msg.provider.duplicateName', { name })
   }
-  return { ok: true, data: { name, protocol: input.protocol, baseUrl, model, group, apiKey: input.apiKey ?? '' } }
+  // Key 粘贴时常带首尾换行/空格：原样加密后拼进 Authorization 头会被 Node 判为非法头值，测试与写入 IDE 全部失败
+  return { ok: true, data: { name, protocol: input.protocol, baseUrl, model, group, apiKey: trimmed(input.apiKey) } }
 }
 
 // ---------------- system:open-path 路径白名单（A2） ----------------
@@ -186,7 +187,7 @@ function openPathRoots(): string[] {
     const s = ide.storage
     if (s.kind === 'sqlite') s.dbPaths.forEach(pushFile)
     else s.paths.forEach(pushFile)
-    if (s.kind === 'toml' && s.secretFile) pushFile(s.secretFile.path)
+    if (s.kind === 'toml' && s.legacySecretFile) pushFile(s.legacySecretFile.path)
   }
   for (const b of Object.values(store.get('ideBindings'))) {
     if (b?.configPath) {
@@ -400,7 +401,7 @@ export function registerIpc(): void {
         id: randomUUID(),
         name: v.data.name,
         protocol: v.data.protocol,
-        apiKey: encrypt(String(p.apiKey ?? '')),
+        apiKey: encrypt(String(p.apiKey ?? '').trim()),
         baseUrl: v.data.baseUrl,
         model: v.data.model,
         group: v.data.group || undefined,
@@ -527,7 +528,7 @@ export function registerIpc(): void {
         id: randomUUID(),
         name: v.data.name,
         protocol: v.data.protocol,
-        apiKey: encrypt(String(ep.apiKey ?? '')),
+        apiKey: encrypt(String(ep.apiKey ?? '').trim()),
         baseUrl: v.data.baseUrl,
         model: v.data.model,
         group: v.data.group || undefined,

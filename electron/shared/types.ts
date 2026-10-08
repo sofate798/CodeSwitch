@@ -150,8 +150,11 @@ export type StorageSpec =
       /** 需写入的表段路径，如 ['model_providers', 'codeswitch'] */
       table?: string[]
       tableValues?: Record<string, string | number | boolean>
-      /** Key 单独落到的 JSON 文件（如 Codex auth.json），field 为 JSON 键名 */
-      secretFile?: { path: string; field: string }
+      /**
+       * 旧版曾把 Key 写进的 JSON 文件（如 Codex auth.json），field 为 JSON 键名。
+       * 应用时不再写入；恢复默认时仅当其值等于当前绑定供应商的 Key 才删除，绝不误删用户自己的凭证。
+       */
+      legacySecretFile?: { path: string; field: string }
     }
   | { kind: 'env'; paths: string[]; mapping: FieldMap }
 

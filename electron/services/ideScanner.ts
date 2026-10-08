@@ -4,10 +4,10 @@ import { store } from './store'
 import { backupFile, readJsonSafe, writeJsonAtomic, restoreBackup, parseJsonc } from './backup'
 import { providerValues, applyFieldsToConfig, setPath, getPath, unsetPath } from './provider'
 import { readItem, probeItem, writeItem, type SqliteRow } from './sqliteStore'
-import { readToml, writeTomlAtomic, ensureTable, removeTable } from './tomlStore'
+import { readToml, writeTomlAtomic, ensureTable, removeTable, tomlToText } from './tomlStore'
 import { readEnv, writeEnvAtomic, removeEnvKeys } from './envStore'
 import { isIdeRunning } from './processGuard'
-import { KeyUnavailableError } from './crypto'
+import { KeyUnavailableError, decrypt } from './crypto'
 import { log } from './logger'
 import type {
   IDEAdapterDef,
@@ -171,7 +171,10 @@ export async function scanIDEs(): Promise<IDEState[]> {
 
     if (installed) {
       running = await isIdeRunning(ide.processNames)
-      const probe = currentProviderId ? 'customized' : await detectCustomized(ide, existing)
+      // assist 型 sqlite（Cursor）从不由本应用写入，不值得每次扫描都把整库读进 sql.js：
+      // 实测 Cursor 的 state.vscdb 约 300MB，WASM 内存增长后不会归还，主进程会常驻数百 MB
+      const skipProbe = capability === 'assist' && ide.storage.kind === 'sqlite'
+      const probe = currentProviderId ? 'customized' : skipProbe ? 'default' : await detectCustomized(ide, existing)
       if (probe === 'error') {
         status = 'error'
         noteKey = 'ide.note.parseError'
@@ -311,37 +314,64 @@ function subToken(v: string | number | boolean, vals: { apiKey: string; baseUrl:
   return v.replace(/\$\{model\}/g, vals.model).replace(/\$\{baseUrl\}/g, vals.baseUrl).replace(/\$\{apiKey\}/g, vals.apiKey)
 }
 
+function boundProvider(ideId: string): Provider | undefined {
+  const pid = store.get('ideBindings')[ideId]?.providerId
+  return pid ? store.get('providers').find((p) => p.id === pid) : undefined
+}
+
+/**
+ * 旧版写进 legacySecretFile 的 Key：仅当其值仍等于当前绑定供应商的 Key（可确认是本应用写的）时，
+ * 返回置空后的文档供调用方回写；用户自己的凭证、无法解密或文件不可解析时一律不动（返回 null）。
+ * 置 null 而非删键：与 Codex 自身写出的 auth.json 形态一致。
+ */
+function legacySecretCleanup(ideId: string, s: TomlSpec): { path: string; doc: Record<string, unknown> } | null {
+  if (!s.legacySecretFile) return null
+  const sp = resolvePath(s.legacySecretFile.path)
+  const bp = boundProvider(ideId)
+  if (!sp || !bp || !fs.existsSync(sp)) return null
+  try {
+    const key = decrypt(bp.apiKey).trim()
+    const raw = fs.readFileSync(sp, 'utf8')
+    const doc = raw.trim() ? parseJsonc(raw) : null
+    const field = s.legacySecretFile.field
+    if (!key || !doc || typeof doc !== 'object' || typeof doc[field] !== 'string' || doc[field].trim() !== key) return null
+    doc[field] = null
+    return { path: sp, doc }
+  } catch {
+    return null
+  }
+}
+
 function applyToml(ide: IDEAdapterDef, provider: Provider, s: TomlSpec, target: string): OpResult {
   const vals = providerValues(provider, ide.id)
+  // 须在 bind() 改写绑定前取：比对的是上一个绑定供应商的 Key
+  const legacy = legacySecretCleanup(ide.id, s)
   const bk = backupFile(ide.id, target, `apply:${provider.name}`)
   try {
     const doc = readToml(target)
     if (s.scalars) for (const [k, v] of Object.entries(s.scalars)) doc[k] = subToken(v, vals)
     if (s.table && s.tableValues) {
+      // 表段由本应用独占：整段替换，旧版写入的 env_key / wire_api="chat" 等已失效的键不能残留
+      removeTable(doc, s.table)
       const t = ensureTable(doc, s.table)
       for (const [k, v] of Object.entries(s.tableValues)) t[k] = subToken(v, vals)
     }
     // M5：维持整体重写（依赖上面的自动备份兜底），取舍详见 tomlStore.ts 头部注释
     writeTomlAtomic(target, doc)
-    // 密钥单独落到 auth.json（如 Codex）
-    if (s.secretFile) {
-      const sp = resolvePath(s.secretFile.path)
-      if (sp) {
-        const bk2 = backupFile(ide.id, sp, `apply:${provider.name}:secret`)
-        try {
-          const raw = fs.existsSync(sp) ? fs.readFileSync(sp, 'utf8') : ''
-          const j = raw.trim() ? parseJsonc(raw) : {}
-          j[s.secretFile.field] = vals.apiKey
-          writeJsonAtomic(sp, j)
-        } catch (e) {
-          if (bk2) restoreBackup(bk2.id)
-          throw e
-        }
-      }
-    }
+    if (legacy) writeLegacySecret(ide.id, legacy, `apply:${provider.name}:secret`)
     bind(ide.id, provider.id, target)
     log('info', 'apply', `${ide.id} <- ${provider.name} (${provider.protocol}, toml)`)
     return { ok: true, code: 'msg.ide.applyNeedRestart' }
+  } catch (e) {
+    if (bk) restoreBackup(bk.id)
+    throw e
+  }
+}
+
+function writeLegacySecret(ideId: string, legacy: { path: string; doc: Record<string, unknown> }, reason: string): void {
+  const bk = backupFile(ideId, legacy.path, reason)
+  try {
+    writeJsonAtomic(legacy.path, legacy.doc)
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
@@ -373,10 +403,10 @@ export async function resetIDE(ideId: string): Promise<OpResult> {
   if (!ide) return { ok: false, code: 'msg.ide.notFound' }
 
   const cap = computeCapability(ide)
-  // 手动/辅助配置型无需恢复：ok=true 且 canceled=true 表示「已跳过、未实际改动」。
-  // 例外：json 型 assist（Zed）早期版本直写过字段（含明文 Key），恢复默认仍需能清掉这些残留；
-  // resetJson 在文件里找不到这些字段时不备份也不重写，对从未写过的文件是无操作。
-  if (cap === 'manual' || (cap === 'assist' && ide.storage.kind !== 'json')) {
+  // 手动配置型无需恢复：ok=true 且 canceled=true 表示「已跳过、未实际改动」。
+  // assist 型（Zed / Cursor）早期版本直写过字段（含明文 Key），恢复默认仍需能清掉这些残留；
+  // 各 reset* 在找不到这些字段时不备份也不重写，对从未写过的目标是无操作。
+  if (cap === 'manual') {
     return { ok: true, canceled: true, code: 'msg.ide.notWritable' }
   }
 
@@ -480,39 +510,21 @@ function resetToml(ide: IDEAdapterDef, s: TomlSpec, target: string): void {
   const doc = readToml(target)
   let changed = s.table ? removeTable(doc, s.table) : false
   // 仅当我们设置的 provider 名生效时才移除顶层标量，避免破坏用户自有配置
-  if (s.scalars) {
-    for (const k of Object.keys(s.scalars)) {
-      if (k === 'model_provider' && doc[k] === 'codeswitch') {
-        delete doc[k]
-        changed = true
-      }
-    }
+  if (s.scalars && 'model_provider' in s.scalars && doc.model_provider === 'codeswitch') {
+    delete doc.model_provider
+    changed = true
+    // 顶层 model 是应用时一并改写的：仍等于所绑供应商的模型才移除（交还 Codex 默认模型），
+    // 否则切回官方 provider 后会带着第三方模型名请求而报错；用户之后改过的值不动
+    const bp = boundProvider(ide.id)
+    if ('model' in s.scalars && bp && doc.model === bp.model) delete doc.model
   }
   // M6：toml 策略从不注入 protocol 私有键（apply 仅写 scalars/table），故无需清理
-  const sp = s.secretFile ? resolvePath(s.secretFile.path) : null
-  let secretDoc: any = null
-  if (sp && s.secretFile && fs.existsSync(sp)) {
-    const raw = fs.readFileSync(sp, 'utf8')
-    const j = raw.trim() ? parseJsonc(raw) : null
-    if (j && typeof j === 'object' && s.secretFile.field in j) {
-      delete j[s.secretFile.field]
-      secretDoc = j
-      changed = true
-    }
-  }
-  if (!changed) return
-  const bk = backupFile(ide.id, target, 'reset')
+  const legacy = legacySecretCleanup(ide.id, s)
+  if (!changed && !legacy) return
+  const bk = changed ? backupFile(ide.id, target, 'reset') : null
   try {
-    writeTomlAtomic(target, doc)
-    if (sp && secretDoc !== null) {
-      const bk2 = backupFile(ide.id, sp, 'reset:secret')
-      try {
-        writeJsonAtomic(sp, secretDoc)
-      } catch (e) {
-        if (bk2) restoreBackup(bk2.id)
-        throw e
-      }
-    }
+    if (changed) writeTomlAtomic(target, doc)
+    if (legacy) writeLegacySecret(ide.id, legacy, 'reset:secret')
   } catch (e) {
     if (bk) restoreBackup(bk.id)
     throw e
@@ -570,7 +582,8 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
   }
 
   const s = ide.storage
-  const targetPath = targetForWrite(ide) ?? undefined
+  // 数据库不是可手动粘贴的载体，“打开所在文件夹”指向 state.vscdb 只会误导
+  const targetPath = s.kind === 'sqlite' ? undefined : targetForWrite(ide) ?? undefined
   let text = ''
 
   const snippet = ASSIST_SNIPPETS[ide.id]
@@ -578,13 +591,6 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
     text = JSON.stringify(snippet(vals), null, 2)
   } else if (s.kind === 'json') {
     text = JSON.stringify(applyFieldsToConfig(provider, s.fields, {}, ide.id), null, 2)
-  } else if (s.kind === 'sqlite') {
-    const fields = provider.protocol === 'anthropic' && s.anthropicValueFields ? s.anthropicValueFields : s.valueFields
-    const obj: any = {}
-    if (fields.apiKey) setPath(obj, fields.apiKey, vals.apiKey)
-    if (fields.baseUrl) setPath(obj, fields.baseUrl, vals.baseUrl)
-    if (fields.model) setPath(obj, fields.model, vals.model)
-    text = JSON.stringify(obj, null, 2)
   } else if (s.kind === 'toml') {
     const doc: Record<string, any> = {}
     if (s.scalars) for (const [k, v] of Object.entries(s.scalars)) doc[k] = subToken(v, vals)
@@ -592,11 +598,8 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
       const t = ensureTable(doc, s.table)
       for (const [k, v] of Object.entries(s.tableValues)) t[k] = subToken(v, vals)
     }
-    text = `# ${resolvePath(s.paths[0]) ?? s.paths[0]}\n` + tomlPreview(doc)
-    if (s.secretFile) {
-      text += `\n\n# ${resolvePath(s.secretFile.path) ?? s.secretFile.path}\n{\n  "${s.secretFile.field}": "${vals.apiKey}"\n}`
-    }
-  } else {
+    text = `# ${resolvePath(s.paths[0]) ?? s.paths[0]}\n` + tomlToText(doc)
+  } else if (s.kind === 'env') {
     const lines: string[] = []
     if (s.mapping.apiKey) lines.push(`${s.mapping.apiKey}=${vals.apiKey}`)
     if (s.mapping.baseUrl) lines.push(`${s.mapping.baseUrl}=${vals.baseUrl}`)
@@ -605,23 +608,10 @@ export function generateConfig(ideId: string, providerId: string): OpResult<{ te
   }
 
   if (!text.trim()) {
-    // 无可写字段（凭证槽位无法定位的辅助型 IDE）：给出可复制的三要素摘要
+    // sqlite 型（凭证在 IDE 加密存储或槽位无法定位）：给出三要素，由用户在 IDE 设置界面填写
     text = `API Key: ${vals.apiKey}\nBase URL: ${vals.baseUrl}\nModel: ${vals.model}`
   }
   return { ok: true, data: { text, targetPath } }
-}
-
-/** 极简 TOML 预览（仅用于生成配置的展示，不落盘） */
-function tomlPreview(doc: Record<string, any>): string {
-  const lines: string[] = []
-  const scalars = Object.entries(doc).filter(([, v]) => typeof v !== 'object')
-  const tables = Object.entries(doc).filter(([, v]) => v && typeof v === 'object')
-  for (const [k, v] of scalars) lines.push(`${k} = ${JSON.stringify(v)}`)
-  for (const [k, v] of tables) {
-    lines.push(`\n[${k}]`)
-    for (const [kk, vv] of Object.entries(v as Record<string, any>)) lines.push(`${kk} = ${JSON.stringify(vv)}`)
-  }
-  return lines.join('\n')
 }
 
 /** 手动指定 IDE 配置文件路径（保留已应用的供应商绑定） */

@@ -27,7 +27,7 @@ export default {
   },
   ide: {
     note: {
-      cursor: "Cursor's built-in AI only allows custom endpoints on Pro or higher (an official server-side restriction; writing state.vscdb directly cannot bypass it). On the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Fully close Cursor before writing.",
+      cursor: "Cursor keeps the API Key encrypted in its own secure storage, which external tools cannot write, so this is assisted setup: after generating, enter the OpenAI API Key in Cursor Settings > Models and enable Override OpenAI Base URL. Custom endpoints for the built-in AI require Pro or higher (an official server-side restriction); on the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Leftovers written by older versions can be removed with Reset (close Cursor first).",
       windsurf: 'Windsurf stores custom model credentials in its app database, located via adaptive probing. Close Windsurf before writing.',
       trae: 'Trae stores credentials in its app database, located via adaptive probing. Close Trae before writing.',
       zed: 'Zed only reads API keys from the system keychain or environment variables, never from settings.json, so it uses assisted setup: merge the generated snippet into settings.json, enter the API key for the codeswitch provider in Zed\'s Agent settings (or set CODESWITCH_API_KEY), then pick the model in the Agent panel. If an older version wrote settings directly, use Reset to clear the leftovers.',
@@ -36,7 +36,7 @@ export default {
       qoder: 'Qoder stores credentials in its app database, located via adaptive probing. Close Qoder before writing.',
       antigravity: 'Antigravity config is plain JSON; if its console performs extra validation, you may need to confirm in the UI after writing.',
       'gemini-cli': 'Gemini CLI natively uses a Google account OAuth; here it writes ~/.gemini/.env in OpenAI-compatible mode, which only takes effect if the CLI supports OpenAI-compatible endpoints.',
-      codex: 'Codex CLI uses ~/.codex/config.toml + auth.json; it writes model_provider=codeswitch and stores the Key in auth.json.',
+      codex: 'Codex CLI uses ~/.codex/config.toml: it writes model_provider=codeswitch plus the matching provider table (the Key is stored in plain text as experimental_bearer_token in that file). Current Codex only supports the Responses API, so the provider must expose /v1/responses; Chat Completions-only providers will not work.',
       'claude-code': 'Claude Code is the official Anthropic CLI; custom endpoints are enabled by writing ANTHROPIC_API_KEY / BASE_URL / MODEL into the env block of ~/.claude/settings.json. Use an Anthropic-protocol provider and restart the CLI to take effect.',
       parseError: 'Config parse failed; the original file was left untouched to protect it.'
     }
@@ -221,7 +221,7 @@ export default {
       tokenCopied: 'Token copied',
       tokenFailed: 'Failed to read the token',
       tokenHint: 'Requests to the gateway must carry Authorization: Bearer <token>; the x-codeswitch-token and x-api-key headers and the ?token= query parameter are also supported. Anthropic clients (e.g. Claude Code) just put the token in the API Key field',
-      hint: 'When enabled, exposes an OpenAI/Anthropic-compatible endpoint on 127.0.0.1 with cross-protocol translation and streaming.\n• Any client that allows a custom Base URL (Cline / Continue / Roo, Codex, Gemini CLI, scripts) can use the URL above to reuse the current provider.\n• Cursor Free blocks custom endpoints for its built-in AI on the server side; install a free OpenAI-compatible extension (e.g. Cline / Continue) inside Cursor and point its Base URL to this gateway to use custom providers without a subscription.'
+      hint: 'When enabled, exposes an OpenAI/Anthropic-compatible endpoint on 127.0.0.1 with cross-protocol translation and streaming.\n• Any client that allows a custom Base URL and speaks Chat Completions or Messages (Cline / Continue / Roo, Claude Code, scripts) can use the URL above to reuse the current provider. The gateway does not serve the Responses API, so current Codex cannot connect through it.\n• Cursor Free blocks custom endpoints for its built-in AI on the server side; install a free OpenAI-compatible extension (e.g. Cline / Continue) inside Cursor and point its Base URL to this gateway to use custom providers without a subscription.'
     }
   },
   tray: {
@@ -249,7 +249,7 @@ export default {
       manualAddOk: 'Config path saved',
       incompatibleProtocol: '{ide} does not support the {protocol} protocol',
       rowAmbiguous: 'Multiple candidate entries found; unable to determine the write target',
-      slotNotFound: 'No custom-model credential entry found in the {name} config database. Configure a custom model once inside {name}, quit it, then apply again'
+      slotNotFound: 'Could not locate a writable credential entry in the {name} config database (it may store the Key encrypted). A config has been generated for you; enter it manually in {name} settings'
     },
     provider: {
       saveOk: 'Provider saved',

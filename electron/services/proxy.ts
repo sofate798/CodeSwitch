@@ -20,7 +20,7 @@ import type { Provider, ProxyConfig, ProxyStatus, OpResult } from '../shared/typ
  *
  * 在 127.0.0.1 上启动一个 OpenAI / Anthropic 双协议兼容的 HTTP 服务，把请求转发到
  * 用户在 CodeSwitch 里选定的「目标供应商」。核心价值：
- *  - 任何允许自定义 Base URL 的客户端（IDE 扩展 Cline/Continue/Roo、Codex/Gemini CLI、
+ *  - 任何允许自定义 Base URL 的 Chat Completions / Messages 客户端（IDE 扩展 Cline/Continue/Roo、Claude Code、
  *    脚本、curl 等）都能指向本网关，从而复用同一份供应商配置；
  *  - 支持 OpenAI ↔ Anthropic 跨协议自动转换（含流式 SSE），一端说 OpenAI、另一端是
  *    Claude Key 也能通；

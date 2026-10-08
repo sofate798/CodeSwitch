@@ -116,6 +116,15 @@ async function confirmApply() {
           applyTarget.value = null
         }
       })
+    } else if (!r.ok && (r.code === 'msg.ide.slotNotFound' || r.code === 'msg.ide.rowAmbiguous')) {
+      // 凭证槽位无法自动定位：直接转入“生成配置”，沿用已选供应商给出可手动填写的三要素
+      showResult(r)
+      const pid = selectedProviderId.value
+      modalShow.value = false
+      applyTarget.value = null
+      openGenerate(ide)
+      genProviderId.value = pid
+      await confirmGenerate()
     } else if (showResult(r)) {
       modalShow.value = false
       applyTarget.value = null
@@ -353,7 +362,7 @@ function batchReset() {
               <template #icon><n-icon :component="IconCheckmarkDone" :size="14" /></template>
               {{ t('home.generate') }}
             </n-button>
-            <!-- assist 型也要能恢复：Zed 旧版直写过明文 Key，需由此清除（status 仅在探测到残留时才非 default） -->
+            <!-- assist 型也要能恢复：Zed / Cursor 旧版直写过明文 Key，需由此清除（status 仅在探测到残留时才非 default） -->
             <n-button size="small" :disabled="!ide.installed || ide.status === 'default' || ide.capability === 'manual'" @click="confirmReset(ide)">
               <template #icon><n-icon :component="IconRefresh" :size="14" /></template>
               {{ t('common.reset') }}

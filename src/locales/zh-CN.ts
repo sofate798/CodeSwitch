@@ -27,7 +27,7 @@ export default {
   },
   ide: {
     note: {
-      cursor: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。',
+      cursor: 'Cursor 把 API Key 加密存在自己的安全存储里，外部程序无法代写，故为辅助配置：生成后在 Cursor 设置 > Models 中填入 OpenAI API Key 并开启 Override OpenAI Base URL。自带 AI 自定义端点需 Pro 及以上订阅（官方服务端限制）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。旧版本直写入库的残留可用“恢复默认”清除（需先关闭 Cursor）。',
       windsurf: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。',
       trae: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。',
       zed: 'Zed 只从系统钥匙串或环境变量读取 API Key，不能写进 settings.json，故采用辅助配置：把生成的片段合并进 settings.json，再在 Zed 的 Agent 设置里为 codeswitch 供应商填写 API Key（或设置环境变量 CODESWITCH_API_KEY），然后在 Agent 面板选择该模型。若旧版本曾直写过配置，可用「恢复默认」清除残留。',
@@ -36,7 +36,7 @@ export default {
       qoder: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。',
       antigravity: 'Antigravity 配置为明文 JSON；若其控制台另有校验，写入后可能需在界面确认。',
       'gemini-cli': 'Gemini CLI 原生使用 Google 账号 OAuth；此处按 OpenAI 兼容模式写入 ~/.gemini/.env，需 CLI 支持 OpenAI 兼容端点方生效。',
-      codex: 'Codex CLI 使用 ~/.codex/config.toml + auth.json；将写入 model_provider=codeswitch 并把 Key 存入 auth.json。',
+      codex: 'Codex CLI 使用 ~/.codex/config.toml：写入 model_provider=codeswitch 及对应 provider 段（Key 以 experimental_bearer_token 明文存于该文件）。当前 Codex 只支持 Responses API，供应商须提供 /v1/responses 端点，仅支持 Chat Completions 的供应商无法使用。',
       'claude-code': 'Claude Code 是 Anthropic 官方 CLI；向 ~/.claude/settings.json 的 env 段写入 ANTHROPIC_API_KEY / BASE_URL / MODEL 实现自定义端点，需使用 Anthropic 协议供应商，重启 CLI 后生效。',
       parseError: '配置解析失败，已保护原文件不做改动'
     }
@@ -221,7 +221,7 @@ export default {
       tokenCopied: '已复制令牌',
       tokenFailed: '读取令牌失败',
       tokenHint: '请求网关需携带 Authorization: Bearer <令牌>；也支持 x-codeswitch-token / x-api-key 请求头或 ?token= 参数。Anthropic 客户端（如 Claude Code）把令牌填在 API Key 位即可',
-      hint: '启用后在本机 127.0.0.1 提供 OpenAI/Anthropic 兼容接口，支持两种协议互转与流式输出。\n• 任意支持自定义 Base URL 的客户端（Cline / Continue / Roo、Codex、Gemini CLI、脚本）填入上面的地址即可复用当前供应商。\n• Cursor 免费版的自带 AI 被官方服务端限制、无法自定义端点；可在 Cursor 内安装免费的 OpenAI 兼容扩展（如 Cline / Continue），把 Base URL 指向本网关，即可免订阅使用自定义供应商。'
+      hint: '启用后在本机 127.0.0.1 提供 OpenAI/Anthropic 兼容接口，支持两种协议互转与流式输出。\n• 任意支持自定义 Base URL、走 Chat Completions 或 Messages 接口的客户端（Cline / Continue / Roo、Claude Code、脚本）填入上面的地址即可复用当前供应商；网关不提供 Responses API，现版 Codex 无法经网关接入。\n• Cursor 免费版的自带 AI 被官方服务端限制、无法自定义端点；可在 Cursor 内安装免费的 OpenAI 兼容扩展（如 Cline / Continue），把 Base URL 指向本网关，即可免订阅使用自定义供应商。'
     }
   },
   tray: {
@@ -249,7 +249,7 @@ export default {
       manualAddOk: '已保存手动指定的配置路径',
       incompatibleProtocol: '{ide} 不支持 {protocol} 协议',
       rowAmbiguous: '配置存储中存在多个候选项，无法确定写入位置',
-      slotNotFound: '未在 {name} 的配置库中找到自定义模型凭证项：请先在 {name} 内手动配置一次自定义模型，关闭后再应用'
+      slotNotFound: '未能在 {name} 的配置库中定位到可写的凭证项（该 IDE 可能将 Key 加密保存），已为你生成配置，请在 {name} 的设置界面手动填写'
     },
     provider: {
       saveOk: '供应商已保存',

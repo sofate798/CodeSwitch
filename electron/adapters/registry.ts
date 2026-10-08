@@ -9,7 +9,7 @@ import type { IDEAdapterDef } from '../shared/types'
  * storage 策略决定供应商信息如何落盘：
  * - json：明文 JSON（Zed / Antigravity）
  * - sqlite：VS Code 系的 globalStorage/state.vscdb，用 sql.js 直写 ItemTable（Cursor/Trae/Kiro/Qoder/...）
- * - toml：Codex config.toml + auth.json
+ * - toml：Codex config.toml
  * - env：Gemini CLI 的 .env
  * 未知 schema 的分支用 sqlite.probeContains 自适应探测凭证行；探测失败则回退为 assist（生成配置+引导）。
  */
@@ -19,6 +19,10 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     name: 'Cursor',
     icon: 'cursor',
     protocols: ['openai', 'anthropic'],
+    // 实测 state.vscdb：OpenAI Key 存于 secret://cursorAuth/openAIKey，是 Cursor 自身 safeStorage 加密的 SecretStorage 项，
+    // 外部写不出它能解开的密文；并不存在 cursorAuth 这一 JSON 行（旧版直写只会插入一行 Cursor 不读、却含明文 Key 的数据）。
+    // 故为 assist：给出三要素由用户在 Cursor 设置里填写；下面的 storage 仅供“恢复默认”清除旧版插入的那一行里的字段。
+    capability: 'assist',
     homeMarkers: ['${USERPROFILE}\\.cursor'],
     configPaths: ['${APPDATA}\\Cursor\\User\\globalStorage\\state.vscdb'],
     detectPaths: [
@@ -247,8 +251,10 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       paths: ['${USERPROFILE}\\.codex\\config.toml'],
       scalars: { model: '${model}', model_provider: 'codeswitch' },
       table: ['model_providers', 'codeswitch'],
-      tableValues: { name: 'CodeSwitch', base_url: '${baseUrl}', env_key: 'OPENAI_API_KEY', wire_api: 'chat' },
-      secretFile: { path: '${USERPROFILE}\\.codex\\auth.json', field: 'OPENAI_API_KEY' }
+      // Codex 配置参考：wire_api 仅支持 "responses"（"chat" 已移除）；自定义 provider 的 Key 只从
+      // env_key 指向的环境变量或 experimental_bearer_token 取，auth.json 里的 OPENAI_API_KEY 对它无效。
+      tableValues: { name: 'CodeSwitch', base_url: '${baseUrl}', wire_api: 'responses', experimental_bearer_token: '${apiKey}' },
+      legacySecretFile: { path: '${USERPROFILE}\\.codex\\auth.json', field: 'OPENAI_API_KEY' }
     },
     noteKey: 'ide.note.codex'
   },

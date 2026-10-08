@@ -86,7 +86,7 @@ const TEST_TIMEOUT_MS = 5000
 export async function testProvider(p: Provider): Promise<OpResult> {
   let key: string
   try {
-    key = decrypt(p.apiKey)
+    key = decrypt(p.apiKey).trim()
   } catch {
     return { ok: false, code: 'msg.provider.keyUnavailable' }
   }
@@ -159,7 +159,8 @@ export async function testProvider(p: Provider): Promise<OpResult> {
  * 由调用方（apply/generateConfig 等返回 OpResult 的函数）捕获并映射为 msg.provider.keyUnavailable。
  */
 export function providerValues(p: Provider, ideId?: string): { apiKey: string; baseUrl: string; model: string } {
-  return { apiKey: decrypt(p.apiKey), baseUrl: normalizeWriteBaseUrl(p.baseUrl, p.protocol, ideId), model: p.model }
+  // trim 兜底早期未经 trim 入库的 Key（带换行会让 Authorization 头非法）
+  return { apiKey: decrypt(p.apiKey).trim(), baseUrl: normalizeWriteBaseUrl(p.baseUrl, p.protocol, ideId), model: p.model }
 }
 
 /** 按点路径写值，缺失的中间层自动创建 */
