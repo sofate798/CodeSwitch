@@ -1,4 +1,4 @@
-import type { BrowserWindow } from 'electron'
+import { nativeTheme, type BrowserWindow } from 'electron'
 
 /**
  * Windows 原生标题栏覆盖层（最小化/最大化/关闭按钮）配色集中定义。
@@ -16,10 +16,21 @@ export const TITLE_BAR = {
   height: 48
 } as const
 
+/**
+ * 把用户主题设置解析为「最终明/暗」。
+ * 'system' 必须跟随 OS 实际偏好（与渲染层 matchMedia('prefers-color-scheme') 同源），
+ * 否则浅色系统的 system 模式下原生覆盖层会恒黑，与浅色 topbar 出现色差矩形（历史回归项）。
+ */
+export function resolveDark(theme: string): boolean {
+  if (theme === 'light') return false
+  if (theme === 'dark') return true
+  return nativeTheme.shouldUseDarkColors // 'system'（及缺省）：跟随 OS
+}
+
 /** 按主题应用标题栏覆盖层与窗口背景色（仅 Windows 生效，其余平台直接返回）。 */
 export function applyTitleBarOverlay(win: BrowserWindow | null, theme: string): void {
   if (!win || process.platform !== 'win32') return
-  const c = theme === 'light' ? TITLE_BAR.light : TITLE_BAR.dark
+  const c = resolveDark(theme) ? TITLE_BAR.dark : TITLE_BAR.light
   win.setTitleBarOverlay({ color: c.color, symbolColor: c.symbolColor, height: TITLE_BAR.height })
   win.setBackgroundColor(c.color)
 }

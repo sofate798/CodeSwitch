@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Tray, Menu, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, Tray, Menu, ipcMain, nativeTheme } from 'electron'
 // 必须最先执行：在 electron-store 实例化前重定向 userData（自定义数据目录）
 import './bootstrap'
 import path from 'node:path'
@@ -8,7 +8,7 @@ import { initLogger, log } from '../services/logger'
 import { store } from '../services/store'
 import { autoStartProxy, stopProxy } from '../services/proxy'
 import { isLegacyCipher, migrateCipher } from '../services/crypto'
-import { applyTitleBarOverlay, TITLE_BAR } from './titleBar'
+import { applyTitleBarOverlay, resolveDark, TITLE_BAR } from './titleBar'
 import type { OpResult, Provider } from '../shared/types'
 
 let win: BrowserWindow | null = null
@@ -41,11 +41,22 @@ registerProcessGuards()
  * 根据主题切换 Windows 原生标题栏按钮（最小化/最大化/关闭）的配色。
  * 具体取值与“覆盖层颜色必须等于 topbar 背景”的约束集中在 ./titleBar 中维护。
  */
+function currentTheme(): string {
+  return (store.get('settings') as { theme?: string })?.theme ?? 'system'
+}
+
 export function applyTitleBarTheme(theme: string): void {
   applyTitleBarOverlay(win, theme)
 }
 
+// OS 明暗实时切换时重解析标题栏配色（仅 'system' 模式实际会变，显式 light/dark 保持不动），
+// 与渲染层 prefers-color-scheme 响应保持同步，避免系统切浅色后原生按钮区仍停在深色。
+nativeTheme.on('updated', () => applyTitleBarOverlay(win, currentTheme()))
+
 function createWindow(): void {
+  // 首帧即按解析后的实际明暗着色，避免浅色系统下先闪现深色背景再纠正。
+  const initialDark = resolveDark(currentTheme())
+  const initialBar = initialDark ? TITLE_BAR.dark : TITLE_BAR.light
   win = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -54,12 +65,12 @@ function createWindow(): void {
     show: false,
     center: true,
     autoHideMenuBar: true,
-    backgroundColor: TITLE_BAR.dark.color,
+    backgroundColor: initialBar.color,
     title: 'CodeSwitch',
     icon: path.join(__dirname, '../../resources/icons/icon.ico'),
     titleBarStyle: process.platform === 'win32' ? 'hidden' : 'default',
     titleBarOverlay: process.platform === 'win32'
-      ? { ...TITLE_BAR.dark, height: TITLE_BAR.height }
+      ? { ...initialBar, height: TITLE_BAR.height }
       : undefined,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -71,8 +82,8 @@ function createWindow(): void {
 
   win.on('ready-to-show', () => win?.show())
 
-  // 启动时按已保存的主题应用一次标题栏配色，避免浅色用户看到黑条
-  applyTitleBarTheme((store.get('settings') as { theme?: string })?.theme ?? 'dark')
+  // 启动时按已解析的主题应用一次标题栏配色，避免浅色用户看到黑条
+  applyTitleBarTheme(currentTheme())
   win.webContents.setWindowOpenHandler((details) => {
     // 外链收口：openExternal 会把 URL 交给系统 shell，非 http(s)/mailto 的 scheme（如 file: / 自定义协议）
     // 可能直接拉起本地程序或泄露本地路径，此处一律丢弃并落日志。
