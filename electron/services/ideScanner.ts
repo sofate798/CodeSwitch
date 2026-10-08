@@ -117,6 +117,14 @@ async function locateSqliteRow(dbPath: string, s: SqliteSpec, hintRowKey?: strin
   return { row: null, ambiguous: false }
 }
 
+/**
+ * assist 型生成片段落点：恢复默认时清除；状态探测时若命中也视为已自定义。
+ * （Zed 新流程写 openai_compatible.codeswitch，旧 fields 只覆盖早期直写的 openai.*）
+ */
+const ASSIST_CLEAR_PATHS: Record<string, string[]> = {
+  zed: ['language_models.openai_compatible.codeswitch']
+}
+
 /** 状态探测：判断目标 IDE 是否已被自定义（不依赖我们的绑定记录） */
 async function detectCustomized(ide: IDEAdapterDef, path: string | null): Promise<'customized' | 'default' | 'error'> {
   const s = ide.storage
@@ -125,7 +133,11 @@ async function detectCustomized(ide: IDEAdapterDef, path: string | null): Promis
     if (s.kind === 'json') {
       const { data, error } = readJsonSafe(path)
       if (error) return 'error'
-      return s.fields.apiKey && getPath(data, s.fields.apiKey) ? 'customized' : 'default'
+      if (s.fields.apiKey && getPath(data, s.fields.apiKey)) return 'customized'
+      for (const p of ASSIST_CLEAR_PATHS[ide.id] ?? []) {
+        if (getPath(data, p) !== undefined) return 'customized'
+      }
+      return 'default'
     }
     if (s.kind === 'sqlite') {
       const { row } = await locateSqliteRow(path, s)
@@ -467,8 +479,15 @@ function resetJson(ide: IDEAdapterDef, s: JsonSpec, target: string): void {
   const { data, error } = readJsonSafe(target)
   if (error && error !== 'not_found') throw new Error(`配置文件无法解析（${error}），已取消恢复以保护原文件`)
   const cfg = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : {}
-  // 先在副本上试清：一个字段都没命中说明本应用从未写过该文件，不备份也不重写
-  if (!clearFields(cfg, s.fields)) return
+  // 先在副本上试清：旧版直写字段 + assist 生成片段落点都没命中 → 本应用从未写过，不备份也不重写
+  let changed = clearFields(cfg, s.fields)
+  for (const p of ASSIST_CLEAR_PATHS[ide.id] ?? []) {
+    if (getPath(cfg, p) !== undefined) {
+      unsetPath(cfg, p)
+      changed = true
+    }
+  }
+  if (!changed) return
   const bk = backupFile(ide.id, target, 'reset')
   try {
     writeJsonAtomic(target, cfg)

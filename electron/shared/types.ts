@@ -121,7 +121,7 @@ export interface FieldMap {
  * 存储策略：描述供应商信息应以何种载体写入目标 IDE。
  * - json：明文 JSON 配置文件（按点路径写入，如 Zed settings.json）
  * - sqlite：VS Code 系的 state.vscdb（ItemTable 里一行 JSON），用 sql.js 整库读写
- * - toml：TOML 配置（如 Codex config.toml）+ 可选 secretFile(JSON) 存 Key
+ * - toml：TOML 配置（如 Codex config.toml）；legacySecretFile 仅用于清除旧版误写入的 JSON Key
  * - env：KEY=VALUE 文本（如 Gemini CLI 的 .env）
  */
 export type StorageSpec =

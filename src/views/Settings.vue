@@ -216,6 +216,9 @@ function resetAll() {
           await store.refreshSettings()
           await loadProxy()
           await loadDataDir()
+          // 出厂重置已作废 proxyToken；刷新展示（会生成新 token，旧 token 失效）
+          tokenVisible.value = false
+          await loadToken()
         }
       } finally {
         resetting.value = false

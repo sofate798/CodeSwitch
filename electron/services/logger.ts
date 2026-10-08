@@ -169,6 +169,13 @@ export function log(level: LogEntry['level'], action: string, rawDetail = ''): v
   if (logDir && logFile !== todayLogFile()) {
     logFile = todayLogFile()
     rotateLogs()
+  } else if (logFile) {
+    // 托盘常驻可跨小时写同一天文件：启动/换日才轮转会让单文件突破 MAX_FILE_BYTES
+    try {
+      if (fs.existsSync(logFile) && fs.statSync(logFile).size > MAX_FILE_BYTES) rotateLogs()
+    } catch {
+      // 体积检查失败不阻断写日志
+    }
   }
   const entry: LogEntry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

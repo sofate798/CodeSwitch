@@ -362,8 +362,13 @@ function batchReset() {
               <template #icon><n-icon :component="IconCheckmarkDone" :size="14" /></template>
               {{ t('home.generate') }}
             </n-button>
-            <!-- assist 型也要能恢复：Zed / Cursor 旧版直写过明文 Key，需由此清除（status 仅在探测到残留时才非 default） -->
-            <n-button size="small" :disabled="!ide.installed || ide.status === 'default' || ide.capability === 'manual'" @click="confirmReset(ide)">
+            <!-- assist 型始终可点恢复：Cursor 为避 300MB 库跳过扫描探测，status 常为 default，但仍可能有旧版残留须清；
+                 各 reset* 无残留时是无操作。auto 型仅在已自定义时启用。 -->
+            <n-button
+              size="small"
+              :disabled="!ide.installed || ide.capability === 'manual' || (ide.capability === 'auto' && ide.status === 'default')"
+              @click="confirmReset(ide)"
+            >
               <template #icon><n-icon :component="IconRefresh" :size="14" /></template>
               {{ t('common.reset') }}
             </n-button>

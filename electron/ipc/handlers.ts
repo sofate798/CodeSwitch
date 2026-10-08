@@ -240,56 +240,58 @@ export function registerIpc(): void {
     // 密文本身渲染层用不到，不出主进程（编辑时 Key 留空即沿用旧值）
     return list.map((p) => ({ ...p, apiKey: '', keyTail: keyTail(p.apiKey) }))
   })
-  safeHandle('provider:save', (_e, input: Partial<Provider> & { protocol: Protocol }) => {
-    const list: Provider[] = store.get('providers')
-    const now = Date.now()
-    const idx = input.id ? list.findIndex((p) => p.id === input.id) : -1
-    const v = validateProviderInput(input, idx >= 0 ? input.id : undefined)
-    if (!v.ok) return v satisfies OpResult
-    const clean = v.data
+  safeHandle('provider:save', (_e, input: Partial<Provider> & { protocol: Protocol }) =>
+    runExclusive(() => {
+      const list: Provider[] = store.get('providers')
+      const now = Date.now()
+      const idx = input.id ? list.findIndex((p) => p.id === input.id) : -1
+      const v = validateProviderInput(input, idx >= 0 ? input.id : undefined)
+      if (!v.ok) return v satisfies OpResult
+      const clean = v.data
 
-    if (idx >= 0) {
-      const existing = list[idx]
-      // apiKey 仅在用户提供新值时加密；否则保留旧密文；掩码占位/密文形状跳过重新加密
-      let apiKeyCipher = existing.apiKey
-      if (clean.apiKey && !isCipher(clean.apiKey) && clean.apiKey !== KEY_MASK_PLACEHOLDER) {
-        apiKeyCipher = encrypt(clean.apiKey)
+      if (idx >= 0) {
+        const existing = list[idx]
+        // apiKey 仅在用户提供新值时加密；否则保留旧密文；掩码占位/密文形状跳过重新加密
+        let apiKeyCipher = existing.apiKey
+        if (clean.apiKey && !isCipher(clean.apiKey) && clean.apiKey !== KEY_MASK_PLACEHOLDER) {
+          apiKeyCipher = encrypt(clean.apiKey)
+        }
+        // 就地替换列表元素，确保修改真正落盘
+        list[idx] = {
+          ...existing,
+          name: clean.name || existing.name,
+          protocol: clean.protocol,
+          baseUrl: clean.baseUrl || existing.baseUrl,
+          model: clean.model || existing.model,
+          // group 为可选字段（与创建路径 clean.group||undefined 对齐）：绝不能用 || existing.group 兜底，
+          // 否则用户编辑时清空分组会被旧值回填，导致分组一旦设置便无法移除。
+          group: clean.group || undefined,
+          apiKey: apiKeyCipher,
+          updatedAt: now
+        }
+        store.set('providers', list)
+        return { ok: true, code: 'msg.provider.saveOk', data: { ...list[idx], apiKey: '' } } satisfies OpResult<Provider>
       }
-      // 就地替换列表元素，确保修改真正落盘
-      list[idx] = {
-        ...existing,
-        name: clean.name || existing.name,
+
+      if (!clean.name || !clean.baseUrl || !clean.model || !clean.apiKey) {
+        return fail('msg.provider.missingFields') satisfies OpResult
+      }
+      const np: Provider = {
+        id: randomUUID(),
+        name: clean.name,
         protocol: clean.protocol,
-        baseUrl: clean.baseUrl || existing.baseUrl,
-        model: clean.model || existing.model,
-        // group 为可选字段（与创建路径 clean.group||undefined 对齐）：绝不能用 || existing.group 兜底，
-        // 否则用户编辑时清空分组会被旧值回填，导致分组一旦设置便无法移除。
+        apiKey: encrypt(clean.apiKey),
+        baseUrl: clean.baseUrl,
+        model: clean.model,
         group: clean.group || undefined,
-        apiKey: apiKeyCipher,
+        createdAt: now,
         updatedAt: now
       }
+      list.push(np)
       store.set('providers', list)
-      return { ok: true, code: 'msg.provider.saveOk', data: { ...list[idx], apiKey: '' } } satisfies OpResult<Provider>
-    }
-
-    if (!clean.name || !clean.baseUrl || !clean.model || !clean.apiKey) {
-      return fail('msg.provider.missingFields') satisfies OpResult
-    }
-    const np: Provider = {
-      id: randomUUID(),
-      name: clean.name,
-      protocol: clean.protocol,
-      apiKey: encrypt(clean.apiKey),
-      baseUrl: clean.baseUrl,
-      model: clean.model,
-      group: clean.group || undefined,
-      createdAt: now,
-      updatedAt: now
-    }
-    list.push(np)
-    store.set('providers', list)
-    return { ok: true, code: 'msg.provider.saveOk', data: { ...np, apiKey: '' } } satisfies OpResult<Provider>
-  })
+      return { ok: true, code: 'msg.provider.saveOk', data: { ...np, apiKey: '' } } satisfies OpResult<Provider>
+    })
+  )
   safeHandle('provider:remove', async (_e, id: string) => {
     // 多键读改写（providers + ideBindings + snapshots + proxy）进串行队列，消除与 apply/reset 的并发竞态（Sam-M6）
     await mutate((s) => {
@@ -387,45 +389,50 @@ export function registerIpc(): void {
       (p) => p && typeof p.name === 'string' && (p.protocol === 'openai' || p.protocol === 'anthropic') && typeof p.baseUrl === 'string'
     )
     if (valid.length === 0) return { ok: false, code: 'msg.provider.importFailed' } satisfies OpResult
-    const list: Provider[] = store.get('providers')
-    const existingNames = new Set(list.map((p) => p.name))
-    const now = Date.now()
-    let added = 0
-    for (const p of valid) {
-      // 导入文件不可信：复用保存时的同一套校验（trim / 长度 / http(s) / 协议），名称与 URL 必填
-      const v = validateProviderInput({ name: p.name, protocol: p.protocol, baseUrl: p.baseUrl, model: String(p.model ?? ''), group: typeof p.group === 'string' ? p.group : '' })
-      if (!v.ok || !v.data.name || !v.data.baseUrl || existingNames.has(v.data.name)) continue
-      // 同一文件内的同名条目也只收第一条，否则会绕过重名约束
-      existingNames.add(v.data.name)
-      list.push({
-        id: randomUUID(),
-        name: v.data.name,
-        protocol: v.data.protocol,
-        apiKey: encrypt(String(p.apiKey ?? '').trim()),
-        baseUrl: v.data.baseUrl,
-        model: v.data.model,
-        group: v.data.group || undefined,
-        createdAt: now,
-        updatedAt: now
-      })
-      added++
-    }
-    store.set('providers', list)
-    return { ok: true, code: 'msg.provider.importOk', args: { count: added, skipped: valid.length - added } } satisfies OpResult
+    // 对话框已结束：仅把写 store 排进队列，避免与 provider:remove / save 交错
+    return runExclusive(() => {
+      const list: Provider[] = store.get('providers')
+      const existingNames = new Set(list.map((p) => p.name))
+      const now = Date.now()
+      let added = 0
+      for (const p of valid) {
+        // 导入文件不可信：复用保存时的同一套校验（trim / 长度 / http(s) / 协议），名称与 URL 必填
+        const v = validateProviderInput({ name: p.name, protocol: p.protocol, baseUrl: p.baseUrl, model: String(p.model ?? ''), group: typeof p.group === 'string' ? p.group : '' })
+        if (!v.ok || !v.data.name || !v.data.baseUrl || existingNames.has(v.data.name)) continue
+        // 同一文件内的同名条目也只收第一条，否则会绕过重名约束
+        existingNames.add(v.data.name)
+        list.push({
+          id: randomUUID(),
+          name: v.data.name,
+          protocol: v.data.protocol,
+          apiKey: encrypt(String(p.apiKey ?? '').trim()),
+          baseUrl: v.data.baseUrl,
+          model: v.data.model,
+          group: v.data.group || undefined,
+          createdAt: now,
+          updatedAt: now
+        })
+        added++
+      }
+      store.set('providers', list)
+      return { ok: true, code: 'msg.provider.importOk', args: { count: added, skipped: valid.length - added } } satisfies OpResult
+    })
   })
 
   // ---- Snapshot ----
   safeHandleValue('snapshot:list', () => listSnapshots())
-  safeHandle('snapshot:create', (_e, name: string, desc: string) => {
-    // 主进程收口：名称 trim 后必填且不超长，备注限长（前端同步校验，此处兜底）
-    const n = trimmed(name)
-    if (!n || n.length > SNAPSHOT_LIMITS.name) return fail('msg.snapshot.nameRequired') satisfies OpResult
-    const d = trimmed(desc)
-    if (d.length > SNAPSHOT_LIMITS.description) return fail('msg.provider.fieldTooLong', { max: SNAPSHOT_LIMITS.description }) satisfies OpResult
-    return createSnapshot(n, d)
-  })
+  safeHandle('snapshot:create', (_e, name: string, desc: string) =>
+    runExclusive(() => {
+      // 主进程收口：名称 trim 后必填且不超长，备注限长（前端同步校验，此处兜底）
+      const n = trimmed(name)
+      if (!n || n.length > SNAPSHOT_LIMITS.name) return fail('msg.snapshot.nameRequired') satisfies OpResult
+      const d = trimmed(desc)
+      if (d.length > SNAPSHOT_LIMITS.description) return fail('msg.provider.fieldTooLong', { max: SNAPSHOT_LIMITS.description }) satisfies OpResult
+      return createSnapshot(n, d)
+    })
+  )
   safeHandle('snapshot:apply', (_e, id: string) => runExclusive(() => applySnapshot(id)))
-  safeHandle('snapshot:remove', (_e, id: string) => removeSnapshot(id))
+  safeHandle('snapshot:remove', (_e, id: string) => runExclusive(() => removeSnapshot(id)))
 
   // 快照导出：写出 .csnap（JSON），内嵌该快照引用的供应商（含明文 Key），保证跨机可迁移
   safeHandle('snapshot:export', async (_e, id: string) => {
@@ -505,61 +512,64 @@ export function registerIpc(): void {
     if (!parsed || parsed.kind !== 'snapshot' || !parsed.snapshot || typeof parsed.snapshot !== 'object') {
       return { ok: false, code: 'msg.snapshot.importFailed' } satisfies OpResult
     }
-    // 1) 导入内嵌供应商，构建 旧 id -> 本机 id 映射
-    const list: Provider[] = store.get('providers')
-    const idMap = new Map<string, string>()
-    const now = Date.now()
-    // 文案 msg.snapshot.importOk 的 {count} 是「快照内嵌的供应商数」（新建或同名复用均计入），绝不能写死 1
-    let providerCount = 0
-    for (const ep of Array.isArray(parsed.providers) ? parsed.providers : []) {
-      if (!ep || typeof ep.name !== 'string' || (ep.protocol !== 'openai' && ep.protocol !== 'anthropic')) continue
-      const name = ep.name.trim()
-      const existing = list.find((p) => p.name === name)
-      if (existing) {
+    // 对话框已结束：供应商入库 + 快照插入进同一队列，避免与 save/remove 交错
+    return runExclusive(() => {
+      // 1) 导入内嵌供应商，构建 旧 id -> 本机 id 映射
+      const list: Provider[] = store.get('providers')
+      const idMap = new Map<string, string>()
+      const now = Date.now()
+      // 文案 msg.snapshot.importOk 的 {count} 是「快照内嵌的供应商数」（新建或同名复用均计入），绝不能写死 1
+      let providerCount = 0
+      for (const ep of Array.isArray(parsed.providers) ? parsed.providers : []) {
+        if (!ep || typeof ep.name !== 'string' || (ep.protocol !== 'openai' && ep.protocol !== 'anthropic')) continue
+        const name = ep.name.trim()
+        const existing = list.find((p) => p.name === name)
+        if (existing) {
+          providerCount++
+          if (ep.refId) idMap.set(ep.refId, existing.id)
+          continue
+        }
+        // .csnap 不可信：与 provider:import 同口径校验，不合格的内嵌供应商不入库（其绑定随之回落为默认）
+        const v = validateProviderInput({ name, protocol: ep.protocol, baseUrl: String(ep.baseUrl ?? ''), model: String(ep.model ?? ''), group: typeof ep.group === 'string' ? ep.group : '' })
+        if (!v.ok || !v.data.name || !v.data.baseUrl) continue
         providerCount++
-        if (ep.refId) idMap.set(ep.refId, existing.id)
-        continue
+        const np: Provider = {
+          id: randomUUID(),
+          name: v.data.name,
+          protocol: v.data.protocol,
+          apiKey: encrypt(String(ep.apiKey ?? '').trim()),
+          baseUrl: v.data.baseUrl,
+          model: v.data.model,
+          group: v.data.group || undefined,
+          createdAt: now,
+          updatedAt: now
+        }
+        list.push(np)
+        if (ep.refId) idMap.set(ep.refId, np.id)
       }
-      // .csnap 不可信：与 provider:import 同口径校验，不合格的内嵌供应商不入库（其绑定随之回落为默认）
-      const v = validateProviderInput({ name, protocol: ep.protocol, baseUrl: String(ep.baseUrl ?? ''), model: String(ep.model ?? ''), group: typeof ep.group === 'string' ? ep.group : '' })
-      if (!v.ok || !v.data.name || !v.data.baseUrl) continue
-      providerCount++
-      const np: Provider = {
-        id: randomUUID(),
-        name: v.data.name,
-        protocol: v.data.protocol,
-        apiKey: encrypt(String(ep.apiKey ?? '').trim()),
-        baseUrl: v.data.baseUrl,
-        model: v.data.model,
-        group: v.data.group || undefined,
-        createdAt: now,
-        updatedAt: now
+      store.set('providers', list)
+      // 2) 重映射绑定：ideId 跨机稳定，仅 providerId 需要换成导入后的本机 id
+      const remapped: Record<string, { providerId: string | null }> = {}
+      const srcBindings = parsed.snapshot.ideBindings && typeof parsed.snapshot.ideBindings === 'object' ? parsed.snapshot.ideBindings : {}
+      for (const [ideId, b] of Object.entries<any>(srcBindings)) {
+        const oldPid: string | null = b && typeof b.providerId === 'string' ? b.providerId : null
+        remapped[ideId] = { providerId: oldPid ? idMap.get(oldPid) ?? null : null }
       }
-      list.push(np)
-      if (ep.refId) idMap.set(ep.refId, np.id)
-    }
-    store.set('providers', list)
-    // 2) 重映射绑定：ideId 跨机稳定，仅 providerId 需要换成导入后的本机 id
-    const remapped: Record<string, { providerId: string | null }> = {}
-    const srcBindings = parsed.snapshot.ideBindings && typeof parsed.snapshot.ideBindings === 'object' ? parsed.snapshot.ideBindings : {}
-    for (const [ideId, b] of Object.entries<any>(srcBindings)) {
-      const oldPid: string | null = b && typeof b.providerId === 'string' ? b.providerId : null
-      remapped[ideId] = { providerId: oldPid ? idMap.get(oldPid) ?? null : null }
-    }
-    // 3) 插入快照
-    // 名称缺失/仅空白时统一回落到当前 locale 的默认名，绝不下沉到服务层去兜底本地化文案。
-    const importedName = (typeof parsed.snapshot.name === 'string' ? parsed.snapshot.name.trim() : '') || d.snapshotDefaultName
-    const snap = insertSnapshot({
-      name: importedName,
-      description: typeof parsed.snapshot.description === 'string' ? parsed.snapshot.description : '',
-      createdAt: typeof parsed.snapshot.createdAt === 'number' ? parsed.snapshot.createdAt : now,
-      ideBindings: remapped
+      // 3) 插入快照
+      // 名称缺失/仅空白时统一回落到当前 locale 的默认名，绝不下沉到服务层去兜底本地化文案。
+      const importedName = (typeof parsed.snapshot.name === 'string' ? parsed.snapshot.name.trim() : '') || d.snapshotDefaultName
+      const snap = insertSnapshot({
+        name: importedName,
+        description: typeof parsed.snapshot.description === 'string' ? parsed.snapshot.description : '',
+        createdAt: typeof parsed.snapshot.createdAt === 'number' ? parsed.snapshot.createdAt : now,
+        ideBindings: remapped
+      })
+      if (!snap.ok) {
+        // 透传服务层结构化错误码/参数；缺失时兜底为通用错误
+        return snap.code ? { ok: false, code: snap.code, args: snap.args } satisfies OpResult : { ok: false, code: 'msg.common.error' } satisfies OpResult
+      }
+      return { ok: true, code: 'msg.snapshot.importOk', args: { count: providerCount, name: snap.data?.name ?? '' } } satisfies OpResult
     })
-    if (!snap.ok) {
-      // 透传服务层结构化错误码/参数；缺失时兜底为通用错误
-      return snap.code ? { ok: false, code: snap.code, args: snap.args } satisfies OpResult : { ok: false, code: 'msg.common.error' } satisfies OpResult
-    }
-    return { ok: true, code: 'msg.snapshot.importOk', args: { count: providerCount, name: snap.data?.name ?? '' } } satisfies OpResult
   })
 
   // ---- Backup ----
@@ -575,7 +585,8 @@ export function registerIpc(): void {
       return restoreBackup(backupId)
     })
   )
-  safeHandle('backup:remove', (_e, backupId: string) => removeBackup(backupId))
+  // 与 apply/backupFile 同队列：否则删备份可能与正在写入的备份清单交错
+  safeHandle('backup:remove', (_e, backupId: string) => runExclusive(() => removeBackup(backupId)))
 
   // ---- Log ----
   safeHandleValue('log:list', () => getLogs())
@@ -719,6 +730,8 @@ export function registerIpc(): void {
       store.set('backups', [])
       store.set('ideBindings', {})
       store.set('proxy', { enabled: false, port: 8787, providerId: null })
+      // 鉴权 token 必须作废：否则“恢复出厂”后旧 token 仍能打网关（用户以为已清干净）
+      store.set('proxyToken', '')
       store.set('settings', {
         theme: prevSettings.theme,
         locale: prevSettings.locale,
