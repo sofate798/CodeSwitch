@@ -21,10 +21,24 @@ export default {
     delete: 'Delete',
     edit: 'Edit',
     test: 'Test',
-    add: 'Add',
     apply: 'Apply',
     reset: 'Reset to default',
     close: 'Close'
+  },
+  ide: {
+    note: {
+      cursor: "Cursor's built-in AI only allows custom endpoints on Pro or higher (an official server-side restriction; writing state.vscdb directly cannot bypass it). On the free tier, enable Settings > Local Gateway, then point an OpenAI-compatible extension such as Cline/Continue inside Cursor to the gateway URL. Fully close Cursor before writing.",
+      windsurf: 'Windsurf stores custom model credentials in its app database, located via adaptive probing. Close Windsurf before writing.',
+      trae: 'Trae stores credentials in its app database, located via adaptive probing. Close Trae before writing.',
+      copilot: "Copilot's BYOK keys live in the VS Code system keyvault (DPAPI) and cannot be written safely. Generate the config, then paste it manually in VS Code Settings > Copilot > Models.",
+      kiro: 'Kiro stores credentials in its app database, located via adaptive probing. Close Kiro before writing.',
+      codebuddy: 'CodeBuddy stores credentials in its app database, located via adaptive probing. Close CodeBuddy before writing.',
+      qoder: 'Qoder stores credentials in its app database, located via adaptive probing. Close Qoder before writing.',
+      antigravity: 'Antigravity config is plain JSON; if its console performs extra validation, you may need to confirm in the UI after writing.',
+      'gemini-cli': 'Gemini CLI natively uses a Google account OAuth; here it writes ~/.gemini/.env in OpenAI-compatible mode, which only takes effect if the CLI supports OpenAI-compatible endpoints.',
+      codex: 'Codex CLI uses ~/.codex/config.toml + auth.json; it writes model_provider=codeswitch and stores the Key in auth.json.',
+      parseError: 'Config parse failed; the original file was left untouched to protect it.'
+    }
   },
   home: {
     title: 'IDE Management',
@@ -37,8 +51,6 @@ export default {
     selectProvider: 'Select a saved provider',
     notFound: 'Not found',
     manualPath: 'Set Path',
-    manualPathTitle: 'Specify config file',
-    manualPathDone: 'Path saved',
     resetConfirm: "Reset {name}'s AI provider config to official defaults. Original config will be backed up. Continue?",
     resetTitle: 'Reset to Default',
     batchApply: 'Batch Apply',
@@ -81,26 +93,19 @@ export default {
     protocol: 'Protocol (required)',
     openai: 'OpenAI Compatible',
     anthropic: 'Anthropic',
-    apiKey: 'API Key',
     apiKeyPlaceholder: 'sk-...',
     apiKeyEditPlaceholder: 'Leave empty to keep current key',
-    baseUrl: 'Base URL',
-    model: 'Model',
     group: 'Group (optional)',
     groupPlaceholder: 'e.g. Work / Personal',
-    testSuccess: 'Connection OK ({ms}ms)',
-    testFailed: 'Connection failed: {msg}',
     deleteConfirm: "Delete '{name}'? IDEs using this provider will need to reselect.",
     deleteTitle: 'Delete Provider',
     empty: 'No providers yet. Click the button above to add one.',
     importBtn: 'Import',
     exportBtn: 'Export',
-    importDone: 'Imported {count} providers',
-    exportDone: 'Exported {count} providers',
-    saved: 'Saved',
     validation: {
       name: 'Please enter a name',
       baseUrl: 'Please enter the Base URL',
+      baseUrlInvalid: 'Invalid Base URL (must start with http(s)://)',
       model: 'Please enter the model',
       apiKey: 'Please enter the API Key'
     }
@@ -116,22 +121,15 @@ export default {
     empty: 'No snapshots yet',
     ideCount: '{count} IDEs',
     nameRequired: 'Please enter a snapshot name',
-    applySuccess: "Snapshot '{name}' applied",
-    appliedConfirm: 'Snapshot applied. {count} IDEs updated',
-    applyFailed: 'Partial failure: {errors}',
+    applyConfirmTitle: 'Apply Snapshot',
+    applyConfirm: 'Apply snapshot "{name}" to all currently-bound IDEs ({count} in total): they will first be reset to official defaults, then the snapshot is applied. Bound IDEs not present in the snapshot will be reset to defaults (each is backed up first). Continue?',
     importBtn: 'Import',
-    exportBtn: 'Export',
-    exportDone: 'Snapshot exported'
+    exportBtn: 'Export'
   },
   backups: {
     title: 'Backup Management',
     subtitle: 'Configs are backed up automatically before every apply / reset',
     empty: 'No backups yet',
-    ide: 'IDE',
-    time: 'Time',
-    reason: 'Source',
-    size: 'Size',
-    path: 'Original Path',
     restore: 'Restore',
     restoreTitle: 'Restore Backup',
     restoreConfirm: "This will overwrite {ide}'s current config file with this backup. The current config is backed up first. Continue?",
@@ -150,8 +148,7 @@ export default {
     clearTitle: 'Clear Logs',
     empty: 'No logs yet',
     exportTxt: 'Export TXT',
-    exportJson: 'Export JSON',
-    exportDone: 'Exported {count} log entries'
+    exportJson: 'Export JSON'
   },
   settings: {
     title: 'Settings',
@@ -168,9 +165,6 @@ export default {
     langEn: 'English',
     about: 'All data is stored locally. API keys are encrypted with AES-256-GCM and never uploaded.',
     checkUpdate: 'Check for Updates',
-    checking: 'Checking for updates...',
-    upToDate: 'You are up to date',
-    updateAvailable: 'Update available: {version}',
     update: 'Updates',
     dataDirChange: 'Change Folder',
     dataDirCustom: 'Using a custom data directory. A restart is required after changing it.',
@@ -185,7 +179,6 @@ export default {
     resetBtn: 'Reset Software',
     resetTitle: 'Reset Software',
     resetConfirm: 'This irreversibly clears all local CodeSwitch data (including encrypted API keys). Configs already written into your IDEs are NOT rolled back; reset them individually under IDE Management if needed. Continue?',
-    resetDone: 'All data has been reset',
     proxy: {
       title: 'Local Forwarding Gateway',
       subtitle: 'OpenAI / Anthropic compatible proxy that forwards to the selected provider',
@@ -215,6 +208,7 @@ export default {
       applyNeedRestart: 'Config written. Restart the IDE to take effect',
       resetDone: 'Reset {name} to official defaults',
       resetAllDone: 'Reset {count} IDEs to official defaults',
+      resetAllFailed: 'Reset failed: none of the {failed} IDEs succeeded (they may need to be closed first)',
       notFound: 'IDE not found',
       notWritable: 'This IDE does not support auto-write',
       needClose: 'Close {name} and try again',
@@ -236,27 +230,31 @@ export default {
       testNetErr: 'Network connection failed',
       testHttpErr: 'Request failed (HTTP {status})',
       keyUnavailable: 'API Key unavailable',
-      exportOk: 'Providers exported',
+      exportOk: 'Exported {count} providers',
       importOk: 'Imported {count} providers',
       importFailed: 'Import failed. Invalid file format',
       notFound: 'Provider not found'
     },
     snapshot: {
       createOk: 'Snapshot created',
-      applyOk: 'Snapshot applied',
+      notFound: 'Snapshot not found',
+      applyOk: "Applied snapshot '{name}'; {applied} IDEs updated",
+      applyFailed: 'Snapshot apply partially failed: {count} IDEs did not succeed',
       removeOk: 'Snapshot deleted',
       exportOk: 'Snapshot exported',
       importOk: "Imported snapshot '{name}' ({count} providers)",
       importFailed: 'Import failed. Invalid snapshot file'
     },
     backup: {
-      restoreOk: 'Backup restored',
+      restoreOk: 'Backup restored to: {target}',
+      restoreWarn: 'Restored, but a residual -wal was detected. Restart the related IDE to avoid stale data being written back: {warning}',
       restoreFailed: 'Restore failed',
-      removeOk: 'Backup deleted'
+      removeOk: 'Backup deleted',
+      notFound: 'Backup not found'
     },
     log: {
       clearOk: 'Logs cleared',
-      exportOk: 'Logs exported'
+      exportOk: 'Exported {count} log entries'
     },
     settings: {
       saveOk: 'Settings saved',

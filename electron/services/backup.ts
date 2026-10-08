@@ -289,7 +289,7 @@ export function restoreBackup(backupId: string): OpResult {
 export function removeBackup(backupId: string): OpResult {
   const list = store.get('backups')
   const b = list.find((x) => x.id === backupId)
-  if (!b) return { ok: false, args: { reason: '备份不存在' } }
+  if (!b) return { ok: false, code: 'msg.backup.notFound' }
   deleteBackupFiles(b)
   store.set('backups', list.filter((x) => x.id !== backupId))
   // 同步刷新该 IDE 的 meta.json

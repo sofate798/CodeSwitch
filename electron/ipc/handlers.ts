@@ -9,7 +9,7 @@ import { listBackups, restoreBackup, removeBackup } from '../services/backup'
 import { getLogs, getLogsForExport, clearLogs, log } from '../services/logger'
 import { proxyStatus, configureProxy, stopProxy, getProxyToken } from '../services/proxy'
 import { getDataDirInfo, migrateDataDir } from '../services/paths'
-import { encrypt, decrypt, keyTail } from '../services/crypto'
+import { encrypt, decrypt, keyTail, isCipher } from '../services/crypto'
 import { randomUUID } from 'node:crypto'
 import type { Provider, AppSettings, Protocol, ProxyConfig, Snapshot, OpResult } from '../shared/types'
 
@@ -76,14 +76,19 @@ export function registerIpc(): void {
   safeHandle('ide:apply', (_e, ideId: string, providerId: string) => applyProvider(ideId, providerId))
   safeHandle('ide:reset', async (_e, ideId: string) => {
     if (ideId !== 'all') return resetIDE(ideId)
-    // 'all'：遍历各 IDE 调 resetIDE；resetIDE 对手动/辅助型返回 canceled=true（已跳过），
-    // 据此跳过、以 ok 计成功数量，最终统一返回 msg.ide.resetAllDone（携带 count）
+    // 'all'：遍历各 IDE 调 resetIDE；resetIDE 对手动/辅助型返回 canceled=true（已跳过）。
+    // 区分“成功/失败/跳过”，全部尝试均失败（无任何成功）时按失败返回，避免“恢复 0 个”被当作成功。
     let count = 0
+    let failed = 0
     for (const s of await scanIDEs()) {
       if (!s.installed) continue
       const r = await resetIDE(s.id)
-      if (r.canceled || !r.ok) continue
-      count++
+      if (r.canceled) continue
+      if (r.ok) count++
+      else failed++
+    }
+    if (count === 0 && failed > 0) {
+      return { ok: false, code: 'msg.ide.resetAllFailed', args: { failed } } satisfies OpResult
     }
     return { ok: true, code: 'msg.ide.resetAllDone', args: { count } } satisfies OpResult
   })
@@ -106,7 +111,7 @@ export function registerIpc(): void {
       const existing = list[idx]
       // apiKey 仅在用户提供新值时加密；否则保留旧密文
       let apiKeyCipher = existing.apiKey
-      if (input.apiKey && !input.apiKey.startsWith('enc:') && input.apiKey !== '****') {
+      if (input.apiKey && !isCipher(input.apiKey) && input.apiKey !== '****') {
         apiKeyCipher = encrypt(input.apiKey)
       }
       // 就地替换列表元素，确保修改真正落盘
@@ -121,7 +126,7 @@ export function registerIpc(): void {
         updatedAt: now
       }
       store.set('providers', list)
-      return list[idx]
+      return { ok: true, code: 'msg.provider.saveOk', data: list[idx] } satisfies OpResult<Provider>
     }
 
     if (!input.name || !input.baseUrl || !input.model || !input.apiKey) {
@@ -140,7 +145,7 @@ export function registerIpc(): void {
     }
     list.push(np)
     store.set('providers', list)
-    return np
+    return { ok: true, code: 'msg.provider.saveOk', data: np } satisfies OpResult<Provider>
   })
   safeHandle('provider:remove', (_e, id: string) => {
     store.set('providers', (store.get('providers') as Provider[]).filter((p: Provider) => p.id !== id))
@@ -160,6 +165,7 @@ export function registerIpc(): void {
     // 若该供应商正是转发网关的目标，解除绑定
     const proxy = store.get('proxy')
     if (proxy?.providerId === id) store.set('proxy', { ...proxy, providerId: null })
+    return { ok: true, code: 'msg.provider.removeOk' } satisfies OpResult
   })
   safeHandle('provider:test', (_e, id: string) => {
     const p = (store.get('providers') as Provider[]).find((x: Provider) => x.id === id)
@@ -250,7 +256,7 @@ export function registerIpc(): void {
 
   // ---- Snapshot ----
   safeHandle('snapshot:list', () => listSnapshots())
-  safeHandle('snapshot:create', (_e, name: string, desc: string) => createSnapshot(name, desc).data)
+  safeHandle('snapshot:create', (_e, name: string, desc: string) => createSnapshot(name, desc))
   safeHandle('snapshot:apply', (_e, id: string) => applySnapshot(id))
   safeHandle('snapshot:remove', (_e, id: string) => removeSnapshot(id))
 

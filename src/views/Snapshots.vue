@@ -2,67 +2,92 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NCard, NButton, NSpace, NTag, NModal, NInput, NEmpty, useMessage, useDialog
+  NTimeline, NTimelineItem, NButton, NSpace, NTag, NModal, NInput, NEmpty, NIcon,
+  useDialog
 } from 'naive-ui'
-import { AddOutline as IconAddOutline, CameraOutline as IconCameraOutline, TrashOutline as IconTrashOutline, CheckmarkDoneOutline as IconCheckmarkDone, DownloadOutline as IconExport, CloudUploadOutline as IconImport } from '@vicons/ionicons5'
+import {
+  AddOutline as IconAddOutline, TrashOutline as IconTrashOutline,
+  CheckmarkDoneOutline as IconCheckmarkDone, DownloadOutline as IconExport,
+  CloudUploadOutline as IconImport
+} from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
+import { useResult } from '../composables/useResult'
+import type { Snapshot } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
-const message = useMessage()
 const dialog = useDialog()
+const { message, showResult } = useResult()
 
 const modalShow = ref(false)
 const name = ref('')
 const desc = ref('')
 const applyingId = ref<string | null>(null)
+const creating = ref(false)
 
 async function create() {
   if (!name.value.trim()) {
     message.warning(t('snapshots.nameRequired'))
     return
   }
-  await window.api.snapshot.create(name.value, desc.value)
-  message.success(t('common.add'))
-  modalShow.value = false
-  name.value = ''; desc.value = ''
-  await store.refreshAll()
+  // Jack-Low15：创建加 loading + try/catch
+  creating.value = true
+  try {
+    const r = await window.api.snapshot.create(name.value, desc.value)
+    // 统一 OpResult<Snapshot>：仅成功才关弹窗/清空/刷新；IPC reject 兜底不静默
+    if (showResult(r)) {
+      modalShow.value = false
+      name.value = ''
+      desc.value = ''
+      await store.refreshAll()
+    }
+  } catch {
+    message.error(t('msg.common.error'))
+  } finally {
+    creating.value = false
+  }
 }
 
-function apply(id: string) {
-  applyingId.value = id
-  window.api.snapshot.apply(id).then(async (r) => {
-    r.ok ? message.success(t('snapshots.applySuccess', { name: store.snapshots.find(s => s.id === id)?.name ?? '' }))
-         : message.error(t('snapshots.applyFailed', { errors: r.message }))
-    await store.refreshAll()
-  }).finally(() => { applyingId.value = null })
+// Jack-Med6：应用前二次确认。applySnapshot 会先把“当前已绑定”的 IDE 全部 reset 再按快照应用，
+// 因此影响数 = 快照绑定 ∩当前已绑定 的并集，不能只算快照内数量（会低估破坏半径）。
+function doApply(s: Snapshot) {
+  const snapIds = Object.keys(s.ideBindings ?? {})
+  const boundIds = store.ides.filter((i) => i.currentProviderId).map((i) => i.id)
+  const count = new Set([...snapIds, ...boundIds]).size
+  dialog.warning({
+    title: t('snapshots.applyConfirmTitle'),
+    content: t('snapshots.applyConfirm', { name: s.name, count }),
+    positiveText: t('common.apply'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      applyingId.value = s.id
+      try {
+        showResult(await window.api.snapshot.apply(s.id))
+        await store.refreshAll()
+      } finally {
+        applyingId.value = null
+      }
+    }
+  })
 }
 
-function remove(id: string) {
+function remove(s: Snapshot) {
   dialog.warning({
     title: t('snapshots.deleteTitle'), content: t('snapshots.deleteConfirm'),
     positiveText: t('common.delete'), negativeText: t('common.cancel'),
     onPositiveClick: async () => {
-      await window.api.snapshot.remove(id)
+      showResult(await window.api.snapshot.remove(s.id))
       await store.refreshAll()
     }
   })
 }
 
-async function doExport(id: string) {
-  const r = await window.api.snapshot.export(id)
-  if (r.ok) message.success(t('snapshots.exportDone'))
-  else if (r.message !== '已取消') message.error(r.message)
+async function doExport(s: Snapshot) {
+  showResult(await window.api.snapshot.export(s.id))
 }
 
 async function doImport() {
-  const r = await window.api.snapshot.import()
-  if (r.ok) {
-    message.success(r.message)
-    await store.refreshAll()
-  } else if (r.message !== '已取消') {
-    message.error(r.message)
-  }
+  if (showResult(await window.api.snapshot.import())) await store.refreshAll()
 }
 
 function fmt(ts: number) {
@@ -82,7 +107,7 @@ function fmt(ts: number) {
           <template #icon><n-icon :component="IconImport" :size="16" /></template>
           {{ t('snapshots.importBtn') }}
         </n-button>
-        <n-button type="primary" @click="modalShow = true">
+        <n-button @click="modalShow = true">
           <template #icon><n-icon :component="IconAddOutline" :size="16" /></template>
           {{ t('snapshots.createTitle') }}
         </n-button>
@@ -91,28 +116,32 @@ function fmt(ts: number) {
 
     <n-empty v-if="store.snapshots.length === 0" :description="t('snapshots.empty')" />
 
-    <div class="snap-list">
-      <n-card v-for="s in store.snapshots" :key="s.id" size="small" :bordered="false" class="snap-card">
-        <div class="snap-head">
-          <n-icon :component="IconCameraOutline" :size="18" color="#60a5fa" />
-          <span class="snap-name">{{ s.name }}</span>
-          <n-tag size="tiny" :bordered="false">{{ t('snapshots.ideCount', { count: Object.keys(s.ideBindings).length }) }}</n-tag>
+    <!-- Jack-Med10：卡片列表改为 n-timeline 时间线视图（PRD 要求） -->
+    <n-timeline v-else class="snap-timeline">
+      <n-timeline-item
+        v-for="s in store.snapshots"
+        :key="s.id"
+        type="success"
+        :time="fmt(s.createdAt)"
+        :title="s.name"
+      >
+        <div class="snap-body">
+          <n-tag size="tiny" :bordered="false">{{ t('snapshots.ideCount', { count: Object.keys(s.ideBindings ?? {}).length }) }}</n-tag>
+          <div v-if="s.description" class="snap-desc">{{ s.description }}</div>
+          <div class="snap-actions">
+            <n-button size="tiny" type="primary" :loading="applyingId === s.id" @click="doApply(s)">
+              <template #icon><n-icon :component="IconCheckmarkDone" :size="12" /></template>{{ t('common.apply') }}
+            </n-button>
+            <n-button size="tiny" @click="doExport(s)" :title="t('snapshots.exportBtn')">
+              <template #icon><n-icon :component="IconExport" :size="12" /></template>
+            </n-button>
+            <n-button size="tiny" type="error" @click="remove(s)" :title="t('common.delete')">
+              <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
+            </n-button>
+          </div>
         </div>
-        <div v-if="s.description" class="snap-desc">{{ s.description }}</div>
-        <div class="snap-time">{{ fmt(s.createdAt) }}</div>
-        <div class="snap-actions">
-          <n-button size="tiny" type="primary" :loading="applyingId === s.id" @click="apply(s.id)">
-            <template #icon><n-icon :component="IconCheckmarkDone" :size="12" /></template>{{ t('common.apply') }}
-          </n-button>
-          <n-button size="tiny" @click="doExport(s.id)" :title="t('snapshots.exportBtn')">
-            <template #icon><n-icon :component="IconExport" :size="12" /></template>
-          </n-button>
-          <n-button size="tiny" type="error" @click="remove(s.id)" :title="t('common.delete')">
-            <template #icon><n-icon :component="IconTrashOutline" :size="12" /></template>
-          </n-button>
-        </div>
-      </n-card>
-    </div>
+      </n-timeline-item>
+    </n-timeline>
 
     <n-modal v-model:show="modalShow" preset="card" style="width: 420px" :title="t('snapshots.createTitle')">
       <n-space vertical>
@@ -120,7 +149,7 @@ function fmt(ts: number) {
         <n-input v-model:value="desc" type="textarea" :placeholder="t('snapshots.descPlaceholder')" />
         <n-space justify="end">
           <n-button @click="modalShow = false">{{ t('common.cancel') }}</n-button>
-          <n-button type="primary" @click="create">{{ t('common.confirm') }}</n-button>
+          <n-button type="primary" :loading="creating" @click="create">{{ t('common.confirm') }}</n-button>
         </n-space>
       </n-space>
     </n-modal>
@@ -129,11 +158,8 @@ function fmt(ts: number) {
 
 <style scoped>
 .page-head { display: flex; justify-content: space-between; margin-bottom: 20px; }
-.snap-list { display: flex; flex-direction: column; gap: 10px; }
-.snap-card { background: var(--bg-card); }
-.snap-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.snap-name { font-weight: 600; }
-.snap-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
-.snap-time { font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; }
+.snap-timeline { padding-top: 6px; }
+.snap-body { display: flex; flex-direction: column; gap: 8px; }
+.snap-desc { font-size: 12px; color: var(--text-secondary); }
 .snap-actions { display: flex; gap: 6px; }
 </style>

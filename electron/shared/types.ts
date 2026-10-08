@@ -16,6 +16,7 @@ export type MsgCode =
   | 'msg.ide.applyNeedRestart'
   | 'msg.ide.resetDone'
   | 'msg.ide.resetAllDone'
+  | 'msg.ide.resetAllFailed'
   | 'msg.ide.notFound'
   | 'msg.ide.notWritable'
   | 'msg.ide.needClose'
@@ -42,14 +43,18 @@ export type MsgCode =
   | 'msg.provider.notFound'
   // 快照 / 备份 / 日志
   | 'msg.snapshot.createOk'
+  | 'msg.snapshot.notFound'
   | 'msg.snapshot.applyOk'
+  | 'msg.snapshot.applyFailed'
   | 'msg.snapshot.removeOk'
   | 'msg.snapshot.exportOk'
   | 'msg.snapshot.importOk'
   | 'msg.snapshot.importFailed'
   | 'msg.backup.restoreOk'
+  | 'msg.backup.restoreWarn'
   | 'msg.backup.restoreFailed'
   | 'msg.backup.removeOk'
+  | 'msg.backup.notFound'
   | 'msg.log.clearOk'
   | 'msg.log.exportOk'
   // 设置 / 代理 / 更新
@@ -168,8 +173,8 @@ export interface IDEAdapterDef {
   extraWrite?: Record<string, unknown>
   /** 是否支持自动写入（false 表示纯手动配置型，UI 禁用应用按钮） */
   writable?: boolean
-  /** 给用户的备注（如新版 Cursor 配置存储位置说明） */
-  note?: string
+  /** 给用户的提示文本 i18n key（如 ide.note.cursor）；前端用 t(noteKey) 渲染，杜绝硬编码中文 */
+  noteKey?: string
 }
 
 export type IDEStatus = 'default' | 'customized' | 'error' | 'missing'
@@ -182,7 +187,8 @@ export interface IDEState {
   configPath: string | null
   currentProviderId: string | null
   lastBackup: number | null
-  note?: string
+  /** 提示文本的 i18n key（来自适配器静态提示或扫描期动态错误）；前端用 t(noteKey) 渲染 */
+  noteKey?: string
   /** 自动化能力，UI 据此决定按钮态与交互 */
   capability: IDECapability
   /** 目标 IDE 当前是否在运行（写入前需关闭） */
@@ -266,8 +272,10 @@ export interface API {
   }
   provider: {
     list(): Promise<Provider[]>
-    save(p: Partial<Provider> & { protocol: Protocol }): Promise<Provider>
-    remove(id: string): Promise<void>
+    /** 新增/编辑供应商：统一返回 OpResult<Provider>（成功 code=msg.provider.saveOk，data=落库后的 Provider；字段缺失 code=msg.provider.missingFields） */
+    save(p: Partial<Provider> & { protocol: Protocol }): Promise<OpResult<Provider>>
+    /** 删除供应商（并清理绑定/快照/网关引用）：成功 code=msg.provider.removeOk */
+    remove(id: string): Promise<OpResult>
     test(id: string): Promise<OpResult<{ latencyMs?: number }>>
     /** 导出全部供应商为 JSON 文件（含明文 Key，主进程弹保存对话框）；成功 code=msg.provider.exportOk，data=文件路径，args.count=数量 */
     export(): Promise<OpResult<string>>
@@ -276,7 +284,8 @@ export interface API {
   }
   snapshot: {
     list(): Promise<Snapshot[]>
-    create(name: string, description?: string): Promise<Snapshot>
+    /** 创建快照：统一返回 OpResult<Snapshot>（成功 code=msg.snapshot.createOk，data=新快照） */
+    create(name: string, description?: string): Promise<OpResult<Snapshot>>
     apply(id: string): Promise<OpResult>
     remove(id: string): Promise<OpResult>
     /** 导出单个快照为 .csnap 文件（内嵌其引用的供应商，含明文 Key，主进程弹保存对话框）；成功 code=msg.snapshot.exportOk，data=文件路径 */

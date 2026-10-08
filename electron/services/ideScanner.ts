@@ -167,7 +167,7 @@ export async function scanIDEs(): Promise<IDEState[]> {
 
     let status: IDEStatus = 'missing'
     let currentProviderId: string | null = binding?.providerId ?? null
-    let note: string | undefined = ide.note
+    let noteKey: string | undefined = ide.noteKey
     let running: boolean | undefined
 
     if (installed) {
@@ -175,7 +175,7 @@ export async function scanIDEs(): Promise<IDEState[]> {
       const probe = currentProviderId ? 'customized' : await detectCustomized(ide, existing)
       if (probe === 'error') {
         status = 'error'
-        note = '配置解析失败，已保护原文件不做改动'
+        noteKey = 'ide.note.parseError'
       } else {
         status = probe === 'customized' ? 'customized' : 'default'
       }
@@ -189,7 +189,7 @@ export async function scanIDEs(): Promise<IDEState[]> {
       configPath: existing,
       currentProviderId,
       lastBackup: store.get('backups').find((b) => b.ideId === ide.id)?.timestamp ?? null,
-      note,
+      noteKey,
       capability,
       running
     })

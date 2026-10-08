@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NCard, NForm, NFormItem, NSelect, NSwitch, NButton, NTag, NSpace, NInputNumber, NInput, useMessage, useDialog } from 'naive-ui'
+import { NCard, NForm, NFormItem, NSelect, NSwitch, NButton, NTag, NSpace, NInputNumber, NInput, useDialog } from 'naive-ui'
 import { useAppStore } from '../stores/app'
+import { useResult } from '../composables/useResult'
 import { setLocale } from '../i18n'
 import type { ProxyStatus } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
-const message = useMessage()
 const dialog = useDialog()
+// useResult 内部已集成 useMessage，统一从其取 message，避免同一实例被取两次。
+const { message, showResult } = useResult()
 const checking = ref(false)
 const resetting = ref(false)
 const dataDir = ref<{ current: string; custom: string | null }>({ current: '', custom: null })
@@ -81,8 +83,9 @@ function changeDataDir() {
     negativeText: t('common.cancel'),
     onPositiveClick: async () => {
       const r = await window.api.system.setDataDir()
+      if (r.canceled) return
       if (!r.ok) {
-        if (r.message !== '已取消') message.error(r.message)
+        showResult(r)
         return
       }
       await loadDataDir()
@@ -108,14 +111,11 @@ function resetAll() {
       resetting.value = true
       try {
         const r = await window.api.system.resetAll()
-        if (r.ok) {
-          message.success(t('settings.resetDone'))
+        if (showResult(r)) {
           await store.refreshAll()
           await store.refreshSettings()
           await loadProxy()
           await loadDataDir()
-        } else {
-          message.error(r.message)
         }
       } finally {
         resetting.value = false
@@ -129,9 +129,11 @@ async function checkUpdate() {
   try {
     // 主进程通过 IPC 调用 electron-updater
     const r = await window.api.system.checkUpdate()
-    if (r.pending) message.info(r.message)
-    else if (r.available) message.success(t('settings.updateAvailable', { version: r.version }))
-    else message.success(t('settings.upToDate'))
+    // 事件驱动结果：available(成功) / notAvailable|noFeed(中性提示) / 其余(失败)
+    const text = t(r.code ?? 'msg.common.error', r.args ?? {})
+    if (r.ok) message.success(text)
+    else if (r.code === 'msg.update.notAvailable' || r.code === 'msg.update.noFeed') message.info(text)
+    else message.error(text)
   } catch (e) {
     message.error((e as Error).message)
   } finally {

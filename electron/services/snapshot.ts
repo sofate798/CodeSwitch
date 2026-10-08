@@ -27,7 +27,7 @@ export function createSnapshot(name: string, description = ''): OpResult<Snapsho
 
 export async function applySnapshot(id: string): Promise<OpResult> {
   const snap = store.get('snapshots').find((s) => s.id === id)
-  if (!snap) return { ok: false, args: { reason: '快照不存在' } }
+  if (!snap) return { ok: false, code: 'msg.snapshot.notFound' }
   const errors: string[] = []
   let applied = 0
   // 先全部重置：resetIDE 现返回 OpResult，canceled=true 表示跳过（manual/assist），不计失败
@@ -44,10 +44,15 @@ export async function applySnapshot(id: string): Promise<OpResult> {
     if (!r.ok) errors.push(`${ideId}: ${r.code ?? 'apply-failed'}`)
     else applied++
   }
-  log('info', 'snapshot-apply', `${snap.name} applied=${applied}`)
+  log(
+    errors.length === 0 ? 'info' : 'warn',
+    'snapshot-apply',
+    `${snap.name} applied=${applied}${errors.length ? ' failed=' + errors.join('; ') : ''}`
+  )
+  // 失败仅回传消息码 + 失败数（errors 内含原始码，不外透以免泄漏 i18n key，明细已落日志）
   return errors.length === 0
     ? { ok: true, code: 'msg.snapshot.applyOk', args: { name: snap.name, applied } }
-    : { ok: false, args: { reason: errors.join('; ') } }
+    : { ok: false, code: 'msg.snapshot.applyFailed', args: { count: errors.length } }
 }
 
 export function removeSnapshot(id: string): OpResult {

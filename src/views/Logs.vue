@@ -1,27 +1,26 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { NButton, NSpace, NEmpty, useDialog, useMessage } from 'naive-ui'
+import { NButton, NSpace, NEmpty, useDialog } from 'naive-ui'
 import { TrashOutline as IconTrashOutline, DownloadOutline as IconDownload } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
+import { useResult } from '../composables/useResult'
 
 const store = useAppStore()
 const { t } = useI18n()
 const dialog = useDialog()
-const message = useMessage()
+const { showResult } = useResult()
 
 function fmt(ts: number) {
   return new Date(ts).toLocaleString(store.settings.locale === 'zh-CN' ? 'zh-CN' : 'en-US', { hour12: false })
 }
 async function doExport(format: 'txt' | 'json') {
-  const r = await window.api.log.export(format)
-  if (r.ok) message.success(t('logs.exportDone', { count: r.count ?? 0 }))
-  else if (r.message !== '已取消') message.error(r.message)
+  showResult(await window.api.log.export(format))
 }
 function clear() {
   dialog.warning({
     title: t('logs.clearTitle'), content: t('logs.clearConfirm'),
     positiveText: t('logs.clear'), negativeText: t('common.cancel'),
-    onPositiveClick: async () => { await window.api.log.clear(); await store.refreshAll() }
+    onPositiveClick: async () => { showResult(await window.api.log.clear()); await store.refreshAll() }
   })
 }
 </script>

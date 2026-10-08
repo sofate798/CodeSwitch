@@ -2,19 +2,20 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NCard, NButton, NSpace, NTag, NSelect, NEmpty, useMessage, useDialog
+  NCard, NButton, NSpace, NTag, NSelect, NEmpty, useDialog
 } from 'naive-ui'
 import {
   RefreshOutline as IconRefresh, TrashOutline as IconTrashOutline,
   TimeOutline as IconTimeOutline, ArchiveOutline as IconArchiveOutline
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
+import { useResult } from '../composables/useResult'
 import type { BackupEntry } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
-const message = useMessage()
 const dialog = useDialog()
+const { message, showResult } = useResult()
 
 const backups = ref<BackupEntry[]>([])
 const ideFilter = ref<string | null>(null)
@@ -23,7 +24,7 @@ const restoring = ref<string | null>(null)
 const ideOptions = ref<{ label: string; value: string }[]>([])
 
 async function load() {
-  backups.value = await window.api.backup.list(ideFilter.value ?? undefined)
+  backups.value = await window.api.backup.list(ideFilter.value || undefined)
 }
 
 onMounted(async () => {
@@ -69,7 +70,9 @@ function restore(b: BackupEntry) {
       restoring.value = b.id
       try {
         const r = await window.api.backup.restore(b.id)
-        r.ok ? message.success(r.message) : message.error(r.message)
+        showResult(r)
+        // 恢复成功但检测到残留 -wal（Sam-M4 数据安全告警）：单独弱提醒，不阻断
+        if (r.ok && r.args?.warning) message.warning(t('msg.backup.restoreWarn', { warning: String(r.args.warning) }))
         await store.refreshAll()
         await load()
       } finally {
@@ -85,7 +88,7 @@ function remove(b: BackupEntry) {
     content: t('backups.deleteConfirm'),
     positiveText: t('common.delete'), negativeText: t('common.cancel'),
     onPositiveClick: async () => {
-      await window.api.backup.remove(b.id)
+      showResult(await window.api.backup.remove(b.id))
       await load()
     }
   })
@@ -119,7 +122,7 @@ function remove(b: BackupEntry) {
     <div class="bak-list">
       <n-card v-for="b in backups" :key="b.id" size="small" :bordered="false" class="bak-card">
         <div class="bak-main">
-          <n-icon :component="IconArchiveOutline" :size="18" color="#60a5fa" />
+          <n-icon :component="IconArchiveOutline" :size="18" />
           <div class="bak-info">
             <div class="bak-line1">
               <span class="bak-ide">{{ ideName(b.ideId) }}</span>

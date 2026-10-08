@@ -3,20 +3,23 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NGrid, NGi, NCard, NTag, NButton, NSelect, NSpace, NEmpty, NInput,
-  NModal, NMessageProvider, useMessage, useDialog
+  NModal, NSpin, useDialog
 } from 'naive-ui'
 import {
-  CheckmarkCircle as IconCheckmarkCircle, CloseCircle as IconCloseCircle,
-  Warning as IconWarning, RefreshOutline as IconRefresh,
-  CheckmarkDoneOutline as IconCheckmarkDone, HardwareChipOutline as IconHardwareChipOutline
+  RefreshOutline as IconRefresh,
+  CheckmarkDoneOutline as IconCheckmarkDone,
+  HardwareChipOutline as IconHardwareChipOutline,
+  LayersOutline as IconBatch,
+  ColorPaletteOutline as IconResetAll
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
-import type { IDEState } from '../../electron/shared/types'
+import { useResult } from '../composables/useResult'
+import type { IDEState, OpResult } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
-const message = useMessage()
 const dialog = useDialog()
+const { message, showResult } = useResult()
 
 // 应用弹窗状态
 const applyTarget = ref<IDEState | null>(null)
@@ -32,6 +35,12 @@ const genText = ref('')
 const genTargetPath = ref('')
 const generating = ref(false)
 
+// 批量应用弹窗状态（Jack-Med5 / FR-04-2 P0）
+const batchShow = ref(false)
+const batchIdeIds = ref<string[]>([])
+const batchProviderId = ref<string | undefined>(undefined)
+const batchRunning = ref(false)
+
 const statusMeta = (s: IDEState['status']) => {
   const light = store.settings.theme === 'light'
   switch (s) {
@@ -44,6 +53,11 @@ const statusMeta = (s: IDEState['status']) => {
 
 const providerOptions = computed(() =>
   store.providers.map((p) => ({ label: `${p.name} (${p.protocol === 'openai' ? 'OpenAI' : 'Anthropic'})`, value: p.id }))
+)
+
+// 仅"已安装 + 支持自动写入"的 IDE 才纳入批量应用候选
+const autoIdeOptions = computed(() =>
+  store.ides.filter((i) => i.installed && i.capability === 'auto').map((i) => ({ label: i.name, value: i.id }))
 )
 
 function openApply(ide: IDEState) {
@@ -60,11 +74,8 @@ async function confirmApply() {
   try {
     const ide = applyTarget.value
     const r = await window.api.ide.apply(ide.id, selectedProviderId.value!)
-    if (r.ok) {
-      message.success(r.message)
-      modalShow.value = false
-      applyTarget.value = null
-    } else if (r.needCloseIde) {
+    // 后端统一 OpResult：目标 IDE 正在运行 -> msg.ide.needClose，给出关闭引导；其余走统一反馈
+    if (!r.ok && r.code === 'msg.ide.needClose') {
       dialog.warning({
         title: t('home.closeIdeTitle'),
         content: t('home.closeIdeConfirm', { name: ide.name }),
@@ -74,8 +85,9 @@ async function confirmApply() {
           applyTarget.value = null
         }
       })
-    } else {
-      message.error(r.message)
+    } else if (showResult(r)) {
+      modalShow.value = false
+      applyTarget.value = null
     }
     await store.refreshAll()
   } finally {
@@ -97,10 +109,10 @@ async function confirmGenerate() {
   try {
     const r = await window.api.ide.generateConfig(genIde.value.id, genProviderId.value)
     if (r.ok) {
-      genText.value = r.text ?? ''
-      genTargetPath.value = r.targetPath ?? ''
+      genText.value = r.data?.text ?? ''
+      genTargetPath.value = r.data?.targetPath ?? ''
     } else {
-      message.error(r.message)
+      showResult(r)
     }
   } finally {
     generating.value = false
@@ -108,11 +120,12 @@ async function confirmGenerate() {
 }
 
 async function copyGen() {
+  // Jack-High2：失败改用 home.copyFailed，不再误用"已复制"文案
   try {
     await navigator.clipboard.writeText(genText.value)
     message.success(t('home.copied'))
   } catch {
-    message.error(t('home.copied'))
+    message.error(t('home.copyFailed'))
   }
 }
 
@@ -128,33 +141,111 @@ function confirmReset(ide: IDEState) {
     negativeText: t('common.cancel'),
     onPositiveClick: async () => {
       const r = await window.api.ide.reset(ide.id)
-      r.ok ? message.success(r.message) : message.error(r.message)
+      showResult(r)
       await store.refreshAll()
     }
   })
 }
+
 async function pickManualPath(ide: IDEState) {
   const picked = await window.api.system.pickFile()
   if (!picked) return
   const r = await window.api.ide.manualAdd(ide.id, picked)
-  r.ok ? message.success(t('home.manualPathDone')) : message.error(r.message)
+  showResult(r)
   await store.refreshAll()
+}
+
+// ---------------- 批量应用 / 全部恢复默认 ----------------
+
+function openBatch() {
+  batchIdeIds.value = []
+  batchProviderId.value = undefined
+  batchShow.value = true
+}
+
+async function confirmBatch() {
+  if (!batchProviderId.value || batchIdeIds.value.length === 0) {
+    message.warning(t('home.batchApplyNoTarget'))
+    return
+  }
+  batchRunning.value = true
+  let count = 0
+  let firstFailed: OpResult | null = null
+  try {
+    const pid = batchProviderId.value
+    for (const ideId of batchIdeIds.value) {
+      const r = await window.api.ide.apply(ideId, pid)
+      if (r.ok) count++
+      else if (!firstFailed) firstFailed = r
+    }
+    await store.refreshAll()
+    // 关键修复：不再无条件报成功。先按消息码提示首个失败项（不吞错），
+    // 仅当无任何失败时才关闭弹窗；部分成功则同时提示已应用数量。
+    if (firstFailed) showResult(firstFailed)
+    else batchShow.value = false
+    if (count > 0) message.success(t('home.batchApplyDone', { count }))
+  } finally {
+    batchRunning.value = false
+  }
+}
+
+function batchReset() {
+  dialog.warning({
+    title: t('home.batchResetTitle'),
+    content: t('home.batchResetConfirm'),
+    positiveText: t('common.reset'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      const r = await window.api.ide.reset('all')
+      showResult(r)
+      await store.refreshAll()
+    }
+  })
 }
 </script>
 
 <template>
   <div class="page">
-    <div class="page-title">{{ t('home.title') }}</div>
-    <div class="page-sub">{{ t('home.subtitle') }}</div>
+    <div class="page-head">
+      <div>
+        <div class="page-title">{{ t('home.title') }}</div>
+        <div class="page-sub">{{ t('home.subtitle') }}</div>
+      </div>
+      <n-space :size="8">
+        <n-button
+          :disabled="store.providers.length === 0 || autoIdeOptions.length === 0"
+          @click="openBatch"
+        >
+          <template #icon><n-icon :component="IconBatch" :size="16" /></template>
+          {{ t('home.batchApply') }}
+        </n-button>
+        <n-button :disabled="store.ides.length === 0" @click="batchReset">
+          <template #icon><n-icon :component="IconResetAll" :size="16" /></template>
+          {{ t('home.batchReset') }}
+        </n-button>
+      </n-space>
+    </div>
 
-    <n-empty v-if="store.ides.length === 0" :description="t('common.refresh') + '...'" />
+    <!-- Jack-Med11：区分 加载中 / 扫描出错 / 真正为空 三态，并消费 store.error（F1） -->
+    <div v-if="store.loading && store.ides.length === 0" class="loading-state">
+      <n-spin size="medium" :show="true" />
+    </div>
+    <n-empty
+      v-else-if="store.ides.length === 0"
+      style="margin-top: 48px"
+      :description="store.error ? t(store.error) : t('home.empty')"
+    >
+      <template #extra>
+        <div class="empty-hint">{{ t('home.emptyHint') }}</div>
+      </template>
+    </n-empty>
 
-    <n-grid :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
+    <n-grid v-else :cols="3" :x-gap="16" :y-gap="16" responsive="screen">
       <n-gi v-for="ide in store.ides" :key="ide.id">
         <n-card :bordered="false" class="ide-card" size="small" hoverable>
           <div class="ide-head">
             <div class="ide-name">
-              <n-icon :component="IconHardwareChipOutline" :size="18" color="#60a5fa" />
+              <n-icon :component="IconHardwareChipOutline" :size="18" />
               <span>{{ ide.name }}</span>
             </div>
             <div class="ide-tags">
@@ -195,7 +286,7 @@ async function pickManualPath(ide: IDEState) {
               {{ t('home.manualPath') }}
             </n-button>
           </div>
-          <div v-if="ide.note" class="ide-note">{{ ide.note }}</div>
+          <div v-if="ide.noteKey" class="ide-note">{{ t(ide.noteKey) }}</div>
         </n-card>
       </n-gi>
     </n-grid>
@@ -229,7 +320,7 @@ async function pickManualPath(ide: IDEState) {
           <div class="form-label">{{ t('providers.name') }}</div>
           <n-select v-model:value="genProviderId" :options="providerOptions" :placeholder="t('home.selectProvider')" />
         </div>
-        <div v-if="genIde?.note" class="ide-note">{{ genIde.note }}</div>
+        <div v-if="genIde?.noteKey" class="ide-note">{{ t(genIde.noteKey) }}</div>
         <n-button size="small" :loading="generating" @click="confirmGenerate">{{ t('home.generate') }}</n-button>
         <div v-if="genText">
           <div class="form-label">{{ t('home.generateHint') }}</div>
@@ -244,10 +335,36 @@ async function pickManualPath(ide: IDEState) {
         </n-space>
       </n-space>
     </n-modal>
+
+    <!-- 批量应用弹窗（Jack-Med5） -->
+    <n-modal v-model:show="batchShow" :mask-closable="false" preset="card" style="width: 520px" :title="t('home.batchApplyTitle')">
+      <n-space vertical :size="16">
+        <div>
+          <div class="form-label">{{ t('home.selectIdes') }}</div>
+          <n-select
+            v-model:value="batchIdeIds"
+            multiple
+            :options="autoIdeOptions"
+            :max-tag-count="6"
+            :placeholder="t('home.selectIdes')"
+          />
+        </div>
+        <div>
+          <div class="form-label">{{ t('providers.name') }}</div>
+          <n-select v-model:value="batchProviderId" :options="providerOptions" :placeholder="t('home.selectProvider')" />
+        </div>
+        <n-space justify="end">
+          <n-button @click="batchShow = false">{{ t('common.cancel') }}</n-button>
+          <n-button type="primary" :loading="batchRunning" @click="confirmBatch">{{ t('common.apply') }}</n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
 <style scoped>
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.loading-state { display: flex; justify-content: center; align-items: center; padding: 72px 0; }
 .ide-card { background: var(--bg-card); }
 .ide-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .ide-tags { display: flex; align-items: center; gap: 6px; }
@@ -261,4 +378,5 @@ async function pickManualPath(ide: IDEState) {
 .ide-actions { display: flex; gap: 8px; }
 .ide-note { font-size: 11px; color: var(--warning); margin-top: 8px; line-height: 1.4; }
 .form-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.empty-hint { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
 </style>

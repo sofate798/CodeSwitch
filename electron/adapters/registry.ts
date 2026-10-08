@@ -45,7 +45,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['openAiApiKey', 'anthropicOverrideApiKey', 'apiKey'],
       encryptSecret: true
     },
-    note: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。'
+    noteKey: 'ide.note.cursor'
   },
   {
     id: 'windsurf',
@@ -70,7 +70,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['customModelApiKey', 'apiKey', 'baseUrl'],
       encryptSecret: true
     },
-    note: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。'
+    noteKey: 'ide.note.windsurf'
   },
   {
     id: 'trae',
@@ -95,7 +95,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
       encryptSecret: true
     },
-    note: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。'
+    noteKey: 'ide.note.trae'
   },
   {
     id: 'zed',
@@ -138,7 +138,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
     processNames: ['Code.exe'],
     capability: 'assist',
     storage: { kind: 'json', paths: ['${APPDATA}\\Code\\User\\settings.json'], fields: {} },
-    note: 'Copilot 的 BYOK 密钥存于 VS Code 系统级密钥库（DPAPI），无法安全直写。可生成配置后在 VS Code Settings > Copilot > Models 手动粘贴。'
+    noteKey: 'ide.note.copilot'
   },
   {
     id: 'kiro',
@@ -163,7 +163,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
       encryptSecret: true
     },
-    note: 'Kiro 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Kiro。'
+    noteKey: 'ide.note.kiro'
   },
   {
     id: 'codebuddy',
@@ -188,7 +188,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
       encryptSecret: true
     },
-    note: 'CodeBuddy 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 CodeBuddy。'
+    noteKey: 'ide.note.codebuddy'
   },
   {
     id: 'qoder',
@@ -216,7 +216,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       probeContains: ['apiKey', 'baseUrl', 'api_key', 'base_url'],
       encryptSecret: true
     },
-    note: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。'
+    noteKey: 'ide.note.qoder'
   },
   {
     id: 'antigravity',
@@ -236,7 +236,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       paths: ['${USERPROFILE}\\.antigravity_cockpit\\config.json'],
       fields: { apiKey: 'openai.apiKey', baseUrl: 'openai.baseUrl', model: 'openai.model' }
     },
-    note: 'Antigravity 配置为明文 JSON；若其控制台另有校验，写入后可能需在界面确认。'
+    noteKey: 'ide.note.antigravity'
   },
   {
     id: 'gemini-cli',
@@ -251,7 +251,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       paths: ['${USERPROFILE}\\.gemini\\.env'],
       mapping: { apiKey: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL', model: 'OPENAI_MODEL' }
     },
-    note: 'Gemini CLI 原生使用 Google 账号 OAuth；此处按 OpenAI 兼容模式写入 ~/.gemini/.env，需 CLI 支持 OpenAI 兼容端点方生效。'
+    noteKey: 'ide.note.gemini-cli'
   },
   {
     id: 'codex',
@@ -269,7 +269,7 @@ export const IDE_REGISTRY: IDEAdapterDef[] = [
       tableValues: { name: 'CodeSwitch', base_url: '${baseUrl}', env_key: 'OPENAI_API_KEY', wire_api: 'chat' },
       secretFile: { path: '${USERPROFILE}\\.codex\\auth.json', field: 'OPENAI_API_KEY' }
     },
-    note: 'Codex CLI 使用 ~/.codex/config.toml + auth.json；将写入 model_provider=codeswitch 并把 Key 存入 auth.json。'
+    noteKey: 'ide.note.codex'
   }
 ]
 

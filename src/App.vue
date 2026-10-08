@@ -4,7 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NConfigProvider, NMessageProvider, NDialogProvider,
-  NSpace, NTag, darkTheme
+  NSpace, NTag, darkTheme,
+  zhCN, enUS, dateZhCN, dateEnUS
 } from 'naive-ui'
 import {
   HomeOutline as IconHomeOutline, HardwareChipOutline as IconHardwareChipOutline,
@@ -56,6 +57,11 @@ const isDark = computed(() => {
 // 深色用 Naive darkTheme，浅色用默认主题（null）。
 const activeTheme = computed(() => (isDark.value ? darkTheme : null))
 
+// 动态走查发现：n-config-provider 未传 locale 时，Naive 组件内置文案（下拉“请选择”、输入框“请输入”等）
+// 恒为库默认英文，与界面语言脱节。故随应用 locale 联动传入组件语言包与日期语言包。
+const naiveLocale = computed(() => (store.settings.locale === 'en-US' ? enUS : zhCN))
+const naiveDateLocale = computed(() => (store.settings.locale === 'en-US' ? dateEnUS : dateZhCN))
+
 // 将同一选择同步到 <html data-theme>，让 main.css 的自定义变量（--bg-* / --text-* 等）跟随切换。
 watch(isDark, (dark) => {
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
@@ -82,7 +88,7 @@ function nav(path: string) { router.push(path) }
 </script>
 
 <template>
-  <n-config-provider :theme="activeTheme" :theme-overrides="themeOverrides">
+  <n-config-provider :theme="activeTheme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <n-message-provider>
       <n-dialog-provider>
         <div class="layout">

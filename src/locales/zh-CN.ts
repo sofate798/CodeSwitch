@@ -21,10 +21,24 @@ export default {
     delete: '删除',
     edit: '编辑',
     test: '测试',
-    add: '新增',
     apply: '应用',
     reset: '恢复默认',
     close: '关闭'
+  },
+  ide: {
+    note: {
+      cursor: 'Cursor 自带 AI 需 Pro 及以上订阅才能自定义端点（官方服务端限制，直写 state.vscdb 也无法绕过）；免费版请在「设置 > 本地转发网关」启用后，在 Cursor 内用 Cline/Continue 等 OpenAI 兼容扩展指向网关地址。写入前请先完全关闭 Cursor。',
+      windsurf: 'Windsurf 自定义模型凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Windsurf。',
+      trae: 'Trae 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Trae。',
+      copilot: 'Copilot 的 BYOK 密钥存于 VS Code 系统级密钥库（DPAPI），无法安全直写。可生成配置后在 VS Code Settings > Copilot > Models 手动粘贴。',
+      kiro: 'Kiro 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Kiro。',
+      codebuddy: 'CodeBuddy 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 CodeBuddy。',
+      qoder: 'Qoder 凭证存于应用数据库，采用自适应探测定位；写入前请先关闭 Qoder。',
+      antigravity: 'Antigravity 配置为明文 JSON；若其控制台另有校验，写入后可能需在界面确认。',
+      'gemini-cli': 'Gemini CLI 原生使用 Google 账号 OAuth；此处按 OpenAI 兼容模式写入 ~/.gemini/.env，需 CLI 支持 OpenAI 兼容端点方生效。',
+      codex: 'Codex CLI 使用 ~/.codex/config.toml + auth.json；将写入 model_provider=codeswitch 并把 Key 存入 auth.json。',
+      parseError: '配置解析失败，已保护原文件不做改动'
+    }
   },
   home: {
     title: 'IDE 管理',
@@ -37,8 +51,6 @@ export default {
     selectProvider: '选择已配置的供应商',
     notFound: '未找到',
     manualPath: '指定路径',
-    manualPathTitle: '手动指定配置文件',
-    manualPathDone: '路径已保存',
     resetConfirm: '将把 {name} 的 AI 供应商配置恢复为官方默认，原配置会自动备份。确定继续？',
     resetTitle: '恢复默认',
     batchApply: '批量应用',
@@ -81,26 +93,19 @@ export default {
     protocol: '协议类型（必选）',
     openai: 'OpenAI 兼容',
     anthropic: 'Anthropic',
-    apiKey: 'API Key',
     apiKeyPlaceholder: 'sk-...',
     apiKeyEditPlaceholder: '留空表示不修改原 Key',
-    baseUrl: 'Base URL',
-    model: 'Model',
     group: '分组（可选）',
     groupPlaceholder: '例如：工作 / 个人',
-    testSuccess: '连接成功 ({ms}ms)',
-    testFailed: '连接失败: {msg}',
     deleteConfirm: '确定删除「{name}」？已应用此供应商的 IDE 需要重新选择。',
     deleteTitle: '删除供应商',
     empty: '还没有供应商，点击右上角新增',
     importBtn: '导入',
     exportBtn: '导出',
-    importDone: '导入 {count} 个供应商',
-    exportDone: '已导出 {count} 个供应商',
-    saved: '保存成功',
     validation: {
       name: '请填写名称',
       baseUrl: '请填写 Base URL',
+      baseUrlInvalid: 'Base URL 格式无效（需 http(s):// 开头）',
       model: '请填写 Model',
       apiKey: '请填写 API Key'
     }
@@ -116,22 +121,15 @@ export default {
     empty: '还没有快照',
     ideCount: '{count} 个 IDE',
     nameRequired: '请填写快照名称',
-    applySuccess: '已应用快照「{name}」',
-    appliedConfirm: '快照已应用，{count} 个 IDE 已更新',
-    applyFailed: '部分失败: {errors}',
+    applyConfirmTitle: '应用快照',
+    applyConfirm: '将把快照「{name}」应用到当前所有已绑定的 IDE（共 {count} 个）：先把它们全部恢复为官方默认，再按快照应用；不在快照内的已绑定 IDE 会被重置为默认（每个都会先自动备份）。确定继续？',
     importBtn: '导入',
-    exportBtn: '导出',
-    exportDone: '快照已导出'
+    exportBtn: '导出'
   },
   backups: {
     title: '备份管理',
     subtitle: '每次应用 / 恢复前自动备份配置文件，可随时还原',
     empty: '暂无备份',
-    ide: 'IDE',
-    time: '时间',
-    reason: '来源',
-    size: '大小',
-    path: '原路径',
     restore: '恢复',
     restoreTitle: '恢复备份',
     restoreConfirm: '将用该备份覆盖 {ide} 的当前配置文件，当前配置会先自动备份。确定继续？',
@@ -150,8 +148,7 @@ export default {
     clearTitle: '清空日志',
     empty: '暂无日志',
     exportTxt: '导出 TXT',
-    exportJson: '导出 JSON',
-    exportDone: '已导出 {count} 条日志'
+    exportJson: '导出 JSON'
   },
   settings: {
     title: '设置',
@@ -168,9 +165,6 @@ export default {
     langEn: 'English',
     about: '所有数据均存储在本机，API Key 使用 AES-256-GCM 加密，不会上传任何服务器。',
     checkUpdate: '检查更新',
-    checking: '正在检查更新...',
-    upToDate: '已是最新版本',
-    updateAvailable: '发现新版本：{version}',
     update: '软件更新',
     dataDirChange: '更改目录',
     dataDirCustom: '当前使用自定义数据目录，更改后需重启生效。',
@@ -185,7 +179,6 @@ export default {
     resetBtn: '重置软件',
     resetTitle: '重置软件',
     resetConfirm: '此操作将不可恢复地清除 CodeSwitch 全部本地数据（包括加密的 API Key）。各 IDE 已写入的配置不会被回滚，如需恢复默认请在「IDE 管理」里逐个重置。确定继续？',
-    resetDone: '已重置全部数据',
     proxy: {
       title: '本地转发网关',
       subtitle: 'OpenAI / Anthropic 兼容代理，把请求转发到选定供应商',
@@ -215,6 +208,7 @@ export default {
       applyNeedRestart: '配置已写入，重启 IDE 后生效',
       resetDone: '已恢复 {name} 为官方默认',
       resetAllDone: '已恢复 {count} 个 IDE 为官方默认',
+      resetAllFailed: '恢复失败：{failed} 个 IDE 均未成功（可能需要先关闭相关 IDE）',
       notFound: '未找到该 IDE',
       notWritable: '该 IDE 不支持自动写入',
       needClose: '请先关闭 {name} 后重试',
@@ -236,27 +230,31 @@ export default {
       testNetErr: '网络连接失败',
       testHttpErr: '请求失败（HTTP {status}）',
       keyUnavailable: 'API Key 不可用',
-      exportOk: '供应商已导出',
+      exportOk: '已导出 {count} 个供应商',
       importOk: '已导入 {count} 个供应商',
       importFailed: '导入失败，文件格式无效',
       notFound: '未找到该供应商'
     },
     snapshot: {
       createOk: '快照已创建',
-      applyOk: '快照已应用',
+      notFound: '未找到该快照',
+      applyOk: '已应用快照「{name}」，{applied} 个 IDE 已更新',
+      applyFailed: '快照应用部分失败：{count} 个 IDE 未成功',
       removeOk: '快照已删除',
       exportOk: '快照已导出',
       importOk: '已导入快照「{name}」（{count} 个供应商）',
       importFailed: '导入失败，快照文件无效'
     },
     backup: {
-      restoreOk: '备份已恢复',
+      restoreOk: '已恢复备份到：{target}',
+      restoreWarn: '已恢复，但检测到残留 -wal，建议重启相关 IDE 以避免旧数据回写：{warning}',
       restoreFailed: '恢复失败',
-      removeOk: '备份已删除'
+      removeOk: '备份已删除',
+      notFound: '未找到该备份'
     },
     log: {
       clearOk: '日志已清空',
-      exportOk: '日志已导出'
+      exportOk: '已导出 {count} 条日志'
     },
     settings: {
       saveOk: '设置已保存',

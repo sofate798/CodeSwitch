@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NCard, NButton, NSpace, NTag, NModal, NForm, NFormItem, NInput,
-  NRadioGroup, NRadio, NEmpty, useMessage, useDialog
+  NRadioGroup, NRadio, NIcon, NEmpty, useDialog,
+  type FormInst, type FormRules
 } from 'naive-ui'
 import {
   AddOutline as IconAddOutline, CreateOutline as IconCreateOutline,
@@ -12,29 +13,56 @@ import {
   DownloadOutline as IconExport, CloudUploadOutline as IconImport
 } from '@vicons/ionicons5'
 import { useAppStore } from '../stores/app'
+import { useResult } from '../composables/useResult'
 import IconLogoOpenAI from '../icons/IconLogoOpenAI.vue'
 import IconLogoAnthropic from '../icons/IconLogoAnthropic.vue'
-import type { Provider } from '../../electron/shared/types'
+import type { Provider, Protocol } from '../../electron/shared/types'
 
 const store = useAppStore()
 const { t } = useI18n()
-const message = useMessage()
 const dialog = useDialog()
+const { message, showResult } = useResult()
 
 const modalShow = ref(false)
 const editing = ref<Provider | null>(null)
 const saving = ref(false)
 const testingId = ref<string | null>(null)
-const testResult = ref<Record<string, { ok: boolean; message: string }>>({})
+// Jack-Med14：测试结果显示改为按消息码本地化后的文案（OpResult.code/args），不再依赖旧 r.message
+const testResult = ref<Record<string, { ok: boolean; text: string }>>({})
 
+const formRef = ref<FormInst | null>(null)
 const form = ref({
   name: '',
-  protocol: 'openai' as 'openai' | 'anthropic',
+  protocol: 'openai' as Protocol,
   apiKey: '',
   baseUrl: '',
   model: '',
   group: ''
 })
+
+function isHttpUrl(raw: string): boolean {
+  try {
+    const u = new URL((raw || '').trim())
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+// Jack-High4：NForm 行内校验，复用 providers.validation.*；编辑态允许 Key 留空（不改原值）
+const rules = computed<FormRules>(() => ({
+  name: { required: true, message: t('providers.validation.name'), trigger: ['input', 'blur'] },
+  baseUrl: [
+    { required: true, message: t('providers.validation.baseUrl'), trigger: ['input', 'blur'] },
+    {
+      validator: (_r, v: string) => isHttpUrl(v),
+      message: t('providers.validation.baseUrlInvalid'),
+      trigger: ['input', 'blur']
+    }
+  ],
+  model: { required: true, message: t('providers.validation.model'), trigger: ['input', 'blur'] },
+  apiKey: { required: !editing.value, message: t('providers.validation.apiKey'), trigger: ['input', 'blur'] }
+}))
 
 function openCreate() {
   editing.value = null
@@ -52,25 +80,24 @@ function openEdit(p: Provider) {
 }
 
 async function save() {
-  // 前置必填校验
-  if (!form.value.name.trim() || !form.value.baseUrl.trim() || !form.value.model.trim()) {
-    message.error(t('providers.name'))
-    return
-  }
-  if (!editing.value && !form.value.apiKey.trim()) {
-    message.error(t('providers.apiKey'))
-    return
+  try {
+    await formRef.value?.validate()
+  } catch {
+    return // 行内校验未通过
   }
   saving.value = true
   try {
-    const payload: any = { ...form.value }
+    const payload: Partial<Provider> & { protocol: Protocol } = { ...form.value }
     if (editing.value) payload.id = editing.value.id
-    await window.api.provider.save(payload)
-    message.success(editing.value ? t('common.edit') : t('common.add'))
-    modalShow.value = false
-    await store.refreshAll()
-  } catch (e) {
-    message.error((e as Error).message)
+    // 后端统一返回 OpResult<Provider>：成功 code=msg.provider.saveOk 走 showResult；
+    // 失败按码提示且**不关弹窗/不清表单**，避免把失败渲染为成功。IPC reject 也兜底不静默。
+    const res = await window.api.provider.save(payload)
+    if (showResult(res)) {
+      modalShow.value = false
+      await store.refreshAll()
+    }
+  } catch {
+    message.error(t('msg.common.error'))
   } finally {
     saving.value = false
   }
@@ -82,9 +109,7 @@ function remove(p: Provider) {
     content: t('providers.deleteConfirm', { name: p.name }),
     positiveText: t('common.delete'), negativeText: t('common.cancel'),
     onPositiveClick: async () => {
-      await window.api.provider.remove(p.id)
-      message.success(t('common.delete'))
-      await store.refreshAll()
+      if (showResult(await window.api.provider.remove(p.id))) await store.refreshAll()
     }
   })
 }
@@ -93,34 +118,29 @@ async function test(p: Provider) {
   testingId.value = p.id
   try {
     const r = await window.api.provider.test(p.id)
-    testResult.value[p.id] = r
-    r.ok ? message.success(t('providers.testSuccess', { ms: r.latencyMs ?? 0 }))
-         : message.error(t('providers.testFailed', { msg: r.message }))
+    const text = t(r.code ?? 'msg.common.error', r.args ?? {})
+    testResult.value[p.id] = { ok: r.ok, text }
+    r.ok ? message.success(text) : message.error(text)
   } finally {
     testingId.value = null
   }
 }
 
-function maskKey(cipher: string): string {
-  if (!cipher) return ''
-  return 'sk-****'
+// Jack-Med9/Tina-M1：脱敏展示消费后端 keyTail，渲染 sk-****{tail}，不再前端静态占位
+function keyDisplay(p: Provider): string {
+  return p.keyTail ? `sk-****${p.keyTail}` : 'sk-****'
 }
 
 async function doExport() {
-  const r = await window.api.provider.export()
-  if (r.ok) message.success(t('providers.exportDone', { count: r.count ?? 0 }))
-  else if (r.message && r.message !== '已取消') message.error(r.message)
+  showResult(await window.api.provider.export())
 }
 
 async function doImport() {
-  const r = await window.api.provider.import()
-  if (r.ok) {
-    message.success(t('providers.importDone', { count: r.count ?? 0 }))
-    await store.refreshAll()
-  } else if (r.message && r.message !== '已取消') {
-    message.error(r.message)
-  }
+  if (showResult(await window.api.provider.import())) await store.refreshAll()
 }
+
+// Jack-Low19：供应商列表刷新后清空过期测试结果，避免陈旧状态误导
+watch(() => store.providers, () => { testResult.value = {} })
 </script>
 
 <template>
@@ -152,7 +172,7 @@ async function doImport() {
       <n-card v-for="p in store.providers" :key="p.id" size="small" :bordered="false" class="p-card" hoverable>
         <div class="p-head">
           <div class="p-name">
-            <n-icon :component="p.protocol === 'openai' ? IconLogoOpenAI : IconLogoAnthropic" :size="16" color="#60a5fa" />
+            <n-icon :component="p.protocol === 'openai' ? IconLogoOpenAI : IconLogoAnthropic" :size="16" />
             <span>{{ p.name }}</span>
           </div>
           <n-tag size="tiny" :bordered="false" :color="{ color: p.protocol === 'openai' ? '#3b82f622' : '#f59e0b22', textColor: p.protocol === 'openai' ? '#60a5fa' : '#f59e0b', borderColor: 'transparent' }">
@@ -162,11 +182,11 @@ async function doImport() {
         <div class="p-meta">
           <div class="p-row"><span class="k">Base URL</span><span class="v">{{ p.baseUrl }}</span></div>
           <div class="p-row"><span class="k">Model</span><span class="v">{{ p.model }}</span></div>
-          <div class="p-row"><span class="k">API Key</span><span class="v mono">{{ maskKey(p.apiKey) }}</span></div>
+          <div class="p-row"><span class="k">API Key</span><span class="v mono">{{ keyDisplay(p) }}</span></div>
         </div>
         <div v-if="testResult[p.id]" class="p-test" :class="{ ok: testResult[p.id].ok }">
           <n-icon :component="testResult[p.id].ok ? IconCheckmarkCircle : IconCloseCircle" :size="12" />
-          {{ testResult[p.id].message }}
+          {{ testResult[p.id].text }}
         </div>
         <div class="p-actions">
           <n-button size="tiny" :loading="testingId === p.id" @click="test(p)">
@@ -184,11 +204,11 @@ async function doImport() {
 
     <!-- 编辑弹窗 -->
     <n-modal v-model:show="modalShow" preset="card" style="width: 520px" :title="editing ? t('providers.editTitle') : t('providers.createTitle')">
-      <n-form label-placement="top" size="medium">
-        <n-form-item :label="t('providers.name')">
+      <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" size="medium">
+        <n-form-item :label="t('providers.name')" path="name">
           <n-input v-model:value="form.name" :placeholder="t('providers.namePlaceholder')" />
         </n-form-item>
-        <n-form-item :label="t('providers.protocol')">
+        <n-form-item :label="t('providers.protocol')" path="protocol">
           <n-radio-group v-model:value="form.protocol">
             <n-space>
               <n-radio value="openai">{{ t('providers.openai') }}</n-radio>
@@ -196,16 +216,16 @@ async function doImport() {
             </n-space>
           </n-radio-group>
         </n-form-item>
-        <n-form-item label="API Key">
+        <n-form-item label="API Key" path="apiKey">
           <n-input v-model:value="form.apiKey" type="password" show-password-on="click" :placeholder="editing ? t('providers.apiKeyEditPlaceholder') : t('providers.apiKeyPlaceholder')" />
         </n-form-item>
-        <n-form-item label="Base URL">
+        <n-form-item label="Base URL" path="baseUrl">
           <n-input v-model:value="form.baseUrl" :placeholder="form.protocol === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com'" />
         </n-form-item>
-        <n-form-item label="Model">
+        <n-form-item label="Model" path="model">
           <n-input v-model:value="form.model" :placeholder="form.protocol === 'openai' ? 'gpt-4o' : 'claude-3-5-sonnet-20241022'" />
         </n-form-item>
-        <n-form-item :label="t('providers.group')">
+        <n-form-item :label="t('providers.group')" path="group">
           <n-input v-model:value="form.group" :placeholder="t('providers.groupPlaceholder')" />
         </n-form-item>
         <n-space justify="end">

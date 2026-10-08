@@ -197,11 +197,11 @@ export function maskKey(value: string): string {
   return `sk-****${value.slice(-4)}`
 }
 
-/** 解密密文并返回明文后 4 位；任何失败返回 ''（供上层组装脱敏展示，不抛错） */
+/** 解密密文并返回明文后 4 位；短于 8 位的密钥不回显尾部（避免短密钥接近明文），任何失败/过短返回 '' */
 export function keyTail(cipher: string): string {
   try {
     const plain = decrypt(cipher)
-    return plain ? plain.slice(-4) : ''
+    return plain.length >= 8 ? plain.slice(-4) : ''
   } catch {
     return ''
   }
@@ -210,6 +210,15 @@ export function keyTail(cipher: string): string {
 /** 是否为旧 enc: 格式（enc2: 不匹配 enc: 前缀，无歧义） */
 export function isLegacyCipher(cipher: string): boolean {
   return typeof cipher === 'string' && cipher.startsWith(LEGACY_PREFIX)
+}
+
+/**
+ * 是否为本服务加密产物。除前缀外还严格校验密文形状：enc2?:<24hex iv>:<32hex tag>:<hex data>，
+ * 避免将恰以 "enc:"/"enc2:" 开头的用户真实明文 Key 误判为密文而跳过加密。
+ */
+const CIPHER_RE = /^enc2?:[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]*$/i
+export function isCipher(value: string): boolean {
+  return typeof value === 'string' && CIPHER_RE.test(value)
 }
 
 /**
